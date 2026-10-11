@@ -73,13 +73,31 @@ sed -i -e "s|@CHAT_MODEL@|/opt/models/${PIAGENT_CHAT_MODEL_FILE}|" \
 chmod 0755 "${ROOTFS_DIR}/usr/local/bin/piagent" "${ROOTFS_DIR}/usr/local/sbin/piagent-firstboot" \
 	"${ROOTFS_DIR}/etc/update-motd.d/60-piagent"
 
+# The only dependency is the hash-checked sqlite-vec wheel, so the venv is
+# created without pip (bootstrapping pip under qemu takes many minutes) and
+# the wheel is unpacked into site-packages, which is all that installing a
+# wheel without scripts or data files does. To add packages later:
+#   sudo /opt/piagent/venv/bin/python3 -m ensurepip
+on_chroot << 'EOF'
+set -e
+rm -rf /opt/piagent/venv
+python3 -m venv --without-pip /opt/piagent/venv
+/opt/piagent/venv/bin/python3 - << 'PY'
+import glob, sysconfig, zipfile
+site = sysconfig.get_paths()["purelib"]
+for wheel in sorted(glob.glob("/opt/piagent/wheels/*.whl")):
+    with zipfile.ZipFile(wheel) as zf:
+        bad = [n for n in zf.namelist() if n.startswith("/") or ".." in n.split("/") or ".data/" in n]
+        if bad:
+            raise SystemExit(f"{wheel}: refusing to unpack {bad[:3]}")
+        zf.extractall(site)
+    print("installed", wheel.rsplit("/", 1)[-1])
+PY
+/opt/piagent/venv/bin/python3 -m compileall -q /opt/piagent/lib
+EOF
+
 on_chroot << EOF
 set -e
-python3 -m venv /opt/piagent/venv
-/opt/piagent/venv/bin/pip install --no-index --no-cache-dir --disable-pip-version-check \
-	--find-links /opt/piagent/wheels sqlite-vec
-/opt/piagent/venv/bin/python3 -m compileall -q /opt/piagent/lib
-
 # Smoke tests under emulation: catch a wrong-ABI binary or wheel at build time.
 /opt/llama.cpp/bin/llama-server --version
 /opt/piagent/venv/bin/python3 -c "import sqlite3, sqlite_vec; c = sqlite3.connect(':memory:'); c.enable_load_extension(True); sqlite_vec.load(c); print('sqlite-vec', c.execute('select vec_version()').fetchone()[0], 'on SQLite', sqlite3.sqlite_version)"
