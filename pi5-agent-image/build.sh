@@ -473,7 +473,15 @@ collect() {
 	ls -lh "$DEPLOY/$name"
 	cat "$DEPLOY/$name.sha256"
 	echo
-	echo "Flash it with Raspberry Pi Imager ('Use custom') or:  sudo dd if=$DEPLOY/$name of=/dev/sdX bs=4M conv=fsync status=progress"
+	local flash dd_out="sudo dd of=/dev/sdX bs=4M conv=fsync status=progress"
+	case "$name" in
+	*.img.xz) flash="xzcat $DEPLOY/$name | $dd_out" ;;
+	*.img.gz) flash="zcat $DEPLOY/$name | $dd_out" ;;
+	*.zip) flash="unzip -p $DEPLOY/$name | $dd_out" ;;
+	*) flash="sudo dd if=$DEPLOY/$name of=/dev/sdX bs=4M conv=fsync status=progress" ;;
+	esac
+	echo "Flash it with Raspberry Pi Imager ('Use custom'), or on Linux (check the device with lsblk first):"
+	echo "  $flash"
 	echo "Login: $FIRST_USER_NAME@$TARGET_HOSTNAME.local (password: see config or $DEPLOY/*-password.txt)"
 }
 
