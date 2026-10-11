@@ -1,0 +1,9 @@
+# build outputs and caches
+/cache/
+/.build/
+/deploy/
+# private build settings (password, SSH key, Wi-Fi)
+/config/build.local.conf
+__pycache__/
+*.pyc
+.pytest_cache/

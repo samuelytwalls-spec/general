@@ -1,0 +1,49 @@
+# PiAgent configuration. Every key is optional; the values shown are the
+# defaults. Restart after editing:  sudo systemctl restart piagent-api
+
+[llm]
+chat_url = "http://127.0.0.1:8081"      # llama-server.service (Phi-4-mini-instruct)
+embed_url = "http://127.0.0.1:8082"     # llama-embed.service (bge-small-en-v1.5)
+chat_model = "phi-4-mini"
+embed_model = "bge-small-en-v1.5"
+temperature = 0.2
+max_tokens = 512
+request_timeout = 600.0
+
+[agent]
+max_steps = 8                           # tool calls per question before a forced answer
+shell = "/bin/bash"
+workdir = "/var/lib/piagent/work"       # working directory for shell commands
+command_timeout = 60                    # seconds; the process group is killed after this
+max_output_chars = 3000                 # command output passed back to the model
+context_chars = 9000                    # prompt budget (the model runs with a 4k token context)
+# Regexes (Python syntax) matched against the whole command line:
+extra_confirm_patterns = []             # e.g. ["\\bvcgencmd\\b"]
+extra_deny_patterns = []                # e.g. ["\\bcurl\\b"]
+
+[rag]
+docs_dir = "/srv/docs"
+db_path = "/var/lib/piagent/rag.db"
+chunk_chars = 1200
+chunk_overlap = 200
+top_k = 4
+max_file_bytes = 5000000
+
+[api]
+bind = "0.0.0.0"                        # "::" for IPv4 + IPv6
+port = @API_PORT@                       # keep in sync with /etc/nftables.conf
+token_file = "/etc/piagent/token"
+tls = true
+tls_cert = "/etc/piagent/tls/cert.pem"
+tls_key = "/etc/piagent/tls/key.pem"
+# Requests from any other source address are refused (the firewall also enforces this).
+allowed_networks = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "fc00::/7", "fe80::/10"]
+session_ttl = 3600
+public_url = ""                         # URL given to enrolled devices; default https://<hostname>.local:<port>
+
+[devices]
+db_path = "/var/lib/piagent/devices.db"
+result_timeout = 120                    # how long the agent waits for a device's result
+poll_wait_max = 30
+command_ttl = 600                       # queued commands expire if no device picks them up
+online_window = 90

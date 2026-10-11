@@ -1,0 +1,14 @@
+#!/bin/sh
+fp="$(cat /etc/piagent/tls/fingerprint.txt 2>/dev/null || echo 'not generated yet')"
+ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+cat <<EOF
+
+ PiAgent: local LLM agent (Phi-4-mini-instruct via llama.cpp)
+   piagent chat              talk to the agent (destructive commands ask first)
+   piagent status            model, index and API health
+   piagent index / search    documents in /srv/docs
+   piagent devices add NAME  enroll a remote machine for the companion client
+   API  https://${ip:-<this-ip>}:@API_PORT@  (LAN only)   token: sudo cat /etc/piagent/token
+   TLS  SHA-256 ${fp}
+
+EOF

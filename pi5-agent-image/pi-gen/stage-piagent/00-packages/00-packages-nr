@@ -1,0 +1,7 @@
+# Firewall, TLS certificate generation, OpenMP runtime for llama.cpp,
+# the sqlite3 CLI (handy for inspecting the RAG index) and Python venvs.
+nftables
+openssl
+libgomp1
+sqlite3
+python3-venv

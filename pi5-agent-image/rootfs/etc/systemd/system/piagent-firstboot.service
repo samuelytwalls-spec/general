@@ -1,0 +1,13 @@
+[Unit]
+Description=PiAgent first-boot setup (API token, TLS certificate)
+After=local-fs.target systemd-hostnamed.service
+Before=piagent-api.service
+ConditionPathExists=!/var/lib/piagent/.firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/piagent-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

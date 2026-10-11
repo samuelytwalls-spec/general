@@ -1,0 +1,41 @@
+[Unit]
+Description=PiAgent API (tool-calling agent, document search, device hub)
+Wants=network-online.target llama-server.service llama-embed.service
+After=network-online.target llama-server.service llama-embed.service piagent-firstboot.service
+ConditionPathExists=/etc/piagent/token
+
+[Service]
+Type=simple
+User=piagent
+Group=piagent
+# video: lets the agent read vcgencmd (temperature, throttling).
+SupplementaryGroups=video
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/var/lib/piagent
+ExecStart=/usr/local/bin/piagent serve
+Restart=on-failure
+RestartSec=5
+UMask=0027
+
+# The agent's shell tool runs inside this sandbox, as user piagent.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/piagent -/srv/docs
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=PiAgent: index /srv/docs for document search
+After=llama-embed.service
+Wants=llama-embed.service
+
+[Service]
+Type=oneshot
+User=piagent
+Group=piagent
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/local/bin/piagent index --local
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/piagent
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=

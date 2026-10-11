@@ -1,0 +1,26 @@
+[Unit]
+Description=PiAgent companion client (runs vetted commands sent by the Pi)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=piagent-client
+Group=piagent-client
+ExecStart=/usr/bin/python3 /opt/piagent-client/piagent_client.py --config /etc/piagent-client/config.json run
+Restart=always
+RestartSec=10
+
+# Commands from the Pi run as piagent-client, inside this sandbox.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

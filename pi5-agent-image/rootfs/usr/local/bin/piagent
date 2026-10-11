@@ -1,0 +1,5 @@
+#!/bin/sh
+# PiAgent command line (see: piagent --help)
+PYTHONPATH="/opt/piagent/lib${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec /opt/piagent/venv/bin/python3 -m piagent "$@"

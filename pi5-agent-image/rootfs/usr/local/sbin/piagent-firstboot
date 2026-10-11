@@ -1,0 +1,59 @@
+#!/bin/bash
+# One-time PiAgent setup, run by piagent-firstboot.service on the first boot.
+#
+#  - API token: taken from /boot/firmware/piagent-token.txt if you put one
+#    there before the first boot (the file is then deleted), otherwise random.
+#    Stored in /etc/piagent/token, readable by root and the piagent group.
+#  - Self-signed TLS certificate for the API. Clients pin its SHA-256
+#    fingerprint, which is written to /etc/piagent/tls/fingerprint.txt.
+#
+# Each device gets its own secrets; nothing secret is baked into the image.
+set -euo pipefail
+
+CONF="${PIAGENT_CONF_DIR:-/etc/piagent}"
+STATE="${PIAGENT_STATE_DIR:-/var/lib/piagent}"
+TOKEN="$CONF/token"
+BOOT_TOKEN="${PIAGENT_BOOT_TOKEN:-/boot/firmware/piagent-token.txt}"
+
+install -d -m 0750 -o root -g piagent "$CONF" "$CONF/tls"
+umask 027
+
+if [ -f "$BOOT_TOKEN" ]; then
+	tok="$(tr -d ' \t\r\n' < "$BOOT_TOKEN")"
+	if [ "${#tok}" -ge 32 ]; then
+		printf '%s\n' "$tok" > "$TOKEN.new"
+		echo "piagent: using the API token from $BOOT_TOKEN"
+	else
+		echo "piagent: ignoring $BOOT_TOKEN (token must be at least 32 characters)" >&2
+	fi
+	rm -f "$BOOT_TOKEN"  # the FAT boot partition has no permissions
+fi
+
+if [ ! -s "$TOKEN.new" ] && [ ! -s "$TOKEN" ]; then
+	openssl rand -base64 33 | tr '+/' '-_' | tr -d '=\n' > "$TOKEN.new"
+	echo >> "$TOKEN.new"
+	echo "piagent: generated a new API token"
+fi
+if [ -s "$TOKEN.new" ]; then
+	chown root:piagent "$TOKEN.new"
+	chmod 0640 "$TOKEN.new"
+	mv -f "$TOKEN.new" "$TOKEN"
+fi
+
+if [ ! -s "$CONF/tls/key.pem" ] || [ ! -s "$CONF/tls/cert.pem" ]; then
+	host="$(hostname)"
+	openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+		-days 3650 -subj "/CN=${host}" \
+		-addext "subjectAltName=DNS:${host},DNS:${host}.local,DNS:localhost,IP:127.0.0.1,IP:::1" \
+		-keyout "$CONF/tls/key.pem" -out "$CONF/tls/cert.pem" 2>/dev/null
+	echo "piagent: generated a TLS certificate for ${host}"
+fi
+chown root:piagent "$CONF/tls/key.pem" "$CONF/tls/cert.pem"
+chmod 0640 "$CONF/tls/key.pem"
+chmod 0644 "$CONF/tls/cert.pem"
+openssl x509 -in "$CONF/tls/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2 > "$CONF/tls/fingerprint.txt"
+chmod 0644 "$CONF/tls/fingerprint.txt"
+echo "piagent: TLS SHA-256 fingerprint $(cat "$CONF/tls/fingerprint.txt")"
+
+install -d -m 0750 -o piagent -g piagent "$STATE" "$STATE/work"
+touch "$STATE/.firstboot-done"
