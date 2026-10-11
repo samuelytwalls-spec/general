@@ -124,11 +124,12 @@ Useful options:
 | `DEPLOY_COMPRESSION=xz` (in config) | write `.img.xz`, about 3× smaller; Raspberry Pi Imager flashes it directly |
 | `BUILDER_DOCKER_OPTS` / `PIGEN_DOCKER_OPTS` | extra `docker run` options, e.g. `--network host` for a proxy on localhost |
 
-**Pinning the model hashes.** The model URLs are mutable Hugging Face paths. On
-the first build `build.sh` prints the SHA-256 of each model; copy them into
-`CHAT_MODEL_SHA256` / `EMBED_MODEL_SHA256` so later builds fail if the files
-change. To build offline, put the `.gguf` files into `cache/artifacts/models/`
-yourself and `build.sh` will use them.
+**Model hashes.** The model URLs are mutable Hugging Face paths, so
+`config/build.conf` pins the SHA-256 of both files and the build stops if a
+download does not match. If you switch models, update `CHAT_MODEL_SHA256` /
+`EMBED_MODEL_SHA256`, or empty them to trust the first download (its hash is
+printed so you can pin it). To build offline, put the `.gguf` files into
+`cache/artifacts/models/` yourself and `build.sh` will use them.
 
 **Other models.** Change `CHAT_MODEL_URL`/`CHAT_MODEL_FILE` (any GGUF that
 llama.cpp supports) or the embedding model. If the embedding model is not a BGE
