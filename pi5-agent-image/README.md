@@ -484,6 +484,8 @@ throttling (`vcgencmd get_throttled`).
 |---|---|
 | `build.sh`: *qemu-aarch64-static is missing* | `sudo apt install qemu-user-static binfmt-support` |
 | `build.sh`: *container exists* | `./build.sh --continue` to resume, `--clean` to start over |
+| Build failed late (e.g. in `export-image`) | resume without redoing finished stages: `SKIP_STAGES="stage0 stage1 stage2 stage-piagent" ./build.sh --continue` |
+| `mkdosfs: unable to open /dev/loop0p1` | the kernel did not create partition nodes for the loop device. `build.sh` registers them with `partx -a`; make sure the pi-gen checkout in `.build/` was prepared by `build.sh` |
 | pi-gen fails in `stage0` on WSL | restart Docker Desktop; make sure the repo is not under `/mnt/c` |
 | Build stops at the ABI check | you are not compiling in `debian:bookworm`; keep `BUILDER_IMAGE=debian:bookworm` |
 | `piagent status` shows `chat_model_ready: false` | the model is still loading, or `journalctl -u llama-server -b` |

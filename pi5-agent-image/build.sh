@@ -4,6 +4,7 @@
 #
 #   ./build.sh                 full build (downloads are cached in ./cache)
 #   ./build.sh --continue      resume a failed pi-gen run in its container
+#                              (SKIP_STAGES="stage0 stage1 stage2" skips finished stages)
 #   ./build.sh --clean         remove the pi-gen container and work files first
 #   ./build.sh --fetch-only    download/compile inputs, stop before pi-gen
 #   ./build.sh -c FILE         use another config file (default config/build.conf)
@@ -24,7 +25,7 @@ while [ $# -gt 0 ]; do
 	--continue) CONTINUE=1; shift ;;
 	--clean) CLEAN=1; shift ;;
 	--fetch-only) FETCH_ONLY=1; shift ;;
-	-h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h | --help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
 	*) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
 	esac
 done
@@ -234,6 +235,66 @@ stage_app() {
 kv() { printf '%s=%q\n' "$1" "$2"; }
 xkv() { printf 'export %s=%q\n' "$1" "$2"; }
 
+# pi-gen's export stage needs the build kernel to parse MBR partitions on loop
+# devices and to mount vfat. Some VM/container kernels have neither, so add
+# fallbacks: register partitions with partx and, if vfat cannot be mounted,
+# write the boot partition with mtools. Both are no-ops on ordinary kernels.
+patch_pigen_kernel_compat() {
+	python3 - "$PIGEN" << 'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+
+MTOOLS_STEP = r'''if [ -f "${STAGE_WORK_DIR}/boot-via-mtools" ]; then
+	# build.sh: copy /boot/firmware into the FAT partition without mounting it
+	BOOT_DEV="${ROOT_DEV%2}1"
+	export MTOOLS_SKIP_CHECK=1
+	mcopy -s -p -m -Q -i "$BOOT_DEV" "${ROOTFS_DIR}/boot/firmware/"* ::/
+	for f in config.txt cmdline.txt kernel_2712.img initramfs_2712 issue.txt; do
+		mdir -b -i "$BOOT_DEV" "::/$f" > /dev/null
+	done
+	echo "boot partition written with mtools: $(mdir -/ -b -i "$BOOT_DEV" ::/ | wc -l) entries"
+	rm -rf "${ROOTFS_DIR}/boot/firmware/"*
+	rm -f "${STAGE_WORK_DIR}/boot-via-mtools"
+fi
+
+'''
+
+
+def patch(rel, old, new):
+    path = root / rel
+    text = path.read_text()
+    if text.count(old) != 1:
+        sys.exit(f"build.sh: cannot patch pi-gen {rel} (layout changed?)")
+    path.write_text(text.replace(old, new))
+
+
+patch("Dockerfile", " dosfstools ", " dosfstools mtools ")
+patch(
+    "export-image/prerun.sh",
+    'ensure_loopdev_partitions "$LOOP_DEV"\n',
+    "# build.sh: kernels without MBR partition parsing create no loopNpM nodes\n"
+    'partx -a "$LOOP_DEV" 2> /dev/null || true\n'
+    'ensure_loopdev_partitions "$LOOP_DEV"\n',
+)
+patch(
+    "export-image/prerun.sh",
+    'mount -v "$BOOT_DEV" "${ROOTFS_DIR}/boot/firmware" -t vfat\n',
+    'if ! mount -v "$BOOT_DEV" "${ROOTFS_DIR}/boot/firmware" -t vfat; then\n'
+    "\t# build.sh: kernel without vfat; 05-finalise writes the files with mtools\n"
+    '\techo "vfat cannot be mounted here; the boot partition will be written with mtools"\n'
+    '\ttouch "${STAGE_WORK_DIR}/boot-via-mtools"\n'
+    "fi\n",
+)
+patch(
+    "export-image/05-finalise/01-run.sh",
+    'unmount "${ROOTFS_DIR}"\nzerofree',
+    MTOOLS_STEP + 'unmount "${ROOTFS_DIR}"\nzerofree',
+)
+PY
+}
+
 # Make pi-gen fetch everything over HTTPS through BUILD_HTTPS_PROXY. Applied to
 # the checkout in .build/ only; the finished image keeps the stock apt sources.
 patch_pigen_for_proxy() {
@@ -308,6 +369,7 @@ prepare_pigen() {
 	# Undo changes from an earlier run, then apply what this configuration needs.
 	git -C "$PIGEN" checkout -q -- .
 	rm -rf "$PIGEN/stage0/00-build-proxy" "$PIGEN/Dockerfile.build-proxy" "$PIGEN/build-ca.crt"
+	patch_pigen_kernel_compat
 	if proxy_mode; then
 		patch_pigen_for_proxy
 	fi
@@ -315,6 +377,17 @@ prepare_pigen() {
 		{ rm -rf "$PIGEN/stage-piagent" && cp -r "$ROOT/pi-gen/stage-piagent" "$PIGEN/stage-piagent"; }
 	# Export only the final image, not the intermediate Lite image.
 	touch "$PIGEN/stage2/SKIP_IMAGES"
+	# SKIP_STAGES="stage0 stage1 ..." with --continue resumes after stages that
+	# already completed in the existing container (e.g. after a failed export).
+	local st
+	for st in stage0 stage1 stage2 stage-piagent; do
+		rm -f "$PIGEN/$st/SKIP"
+	done
+	for st in ${SKIP_STAGES:-}; do
+		[ -d "$PIGEN/$st" ] || die "SKIP_STAGES: unknown stage $st"
+		touch "$PIGEN/$st/SKIP"
+		echo "skipping $st (SKIP_STAGES)"
+	done
 
 	if [ -z "${FIRST_USER_PASS:-}" ]; then
 		local pwfile="$DEPLOY/${IMG_NAME}-${FIRST_USER_NAME}-password.txt"
