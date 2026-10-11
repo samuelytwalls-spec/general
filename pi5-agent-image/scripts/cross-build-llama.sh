@@ -31,6 +31,14 @@ MAX_GLIBCXX="${MAX_GLIBCXX:-3.4.30}"
 
 if [ "$INSTALL_DEPS" = "1" ]; then
 	export DEBIAN_FRONTEND=noninteractive
+	if [ -n "${BUILD_HTTPS_PROXY:-}" ]; then
+		# Network that only allows HTTPS through a proxy (see BUILD_HTTPS_PROXY in build.conf).
+		sed -i 's#http://deb.debian.org#https://deb.debian.org#g' /etc/apt/sources.list.d/debian.sources
+		{
+			echo "Acquire::https::Proxy \"${BUILD_HTTPS_PROXY}\";"
+			if [ -f /etc/build-ca.crt ]; then echo 'Acquire::https::CAInfo "/etc/build-ca.crt";'; fi
+		} > /etc/apt/apt.conf.d/99build-proxy
+	fi
 	apt-get update
 	apt-get install -y --no-install-recommends \
 		crossbuild-essential-arm64 cmake ninja-build git ca-certificates file

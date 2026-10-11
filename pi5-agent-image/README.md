@@ -124,6 +124,22 @@ Useful options:
 | `DEPLOY_COMPRESSION=xz` (in config) | write `.img.xz`, about 3× smaller; Raspberry Pi Imager flashes it directly |
 | `BUILDER_DOCKER_OPTS` / `PIGEN_DOCKER_OPTS` | extra `docker run` options, e.g. `--network host` for a proxy on localhost |
 
+**Behind an HTTPS proxy.** If outbound traffic must go through an HTTPS proxy,
+possibly one that inspects TLS with its own CA, set these in
+`config/build.local.conf`:
+
+```bash
+BUILD_HTTPS_PROXY=http://proxy.example:3128
+BUILD_CA_FILE=/path/to/proxy-ca-bundle.pem    # only for TLS-inspecting proxies
+```
+
+The build containers then use host networking, fetch the Debian and Raspberry
+Pi archives over HTTPS through the proxy, and trust the CA. `build.sh` applies
+this to its pi-gen checkout in `.build/` only, and the export stage restores
+the stock apt sources, so the image contains no proxy settings or build CA.
+Model and wheel downloads run on the host and use the usual `https_proxy`
+environment variable.
+
 **Model hashes.** The model URLs are mutable Hugging Face paths, so
 `config/build.conf` pins the SHA-256 of both files and the build stops if a
 download does not match. If you switch models, update `CHAT_MODEL_SHA256` /
