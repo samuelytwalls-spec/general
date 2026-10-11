@@ -186,7 +186,10 @@ _WRAPPER_POSITIONAL_VALUE = {"timeout", "chrt", "taskset"}
 
 _SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "fish", "busybox"}
 _INTERPRETERS = {"python", "python3", "perl", "ruby", "node", "nodejs", "php", "lua",
-                 "lua5.1", "luajit", "tclsh", "awk", "gawk", "mawk", "osascript", "powershell", "pwsh"}
+                 "lua5.1", "luajit", "tclsh", "osascript", "powershell", "pwsh"}
+_AWKS = {"awk", "gawk", "mawk", "nawk", "busybox-awk"}
+# system("..."), "cmd" | getline, print > "file", print | "cmd"
+_AWK_RISKY = re.compile(r"\bsystem\s*\(|\|\s*&?\s*getline|\bprintf?\b[^;}]*?(>|\|(?!\|))")
 
 _BLOCK_DEVICE = re.compile(r"^/dev/(sd[a-z]|mmcblk|nvme|hd[a-z]|vd[a-z]|xvd|loop|mtd|disk/|mapper/|md\d|dm-|ram)")
 _SYSTEM_PATH = re.compile(
@@ -273,6 +276,14 @@ def _classify_argv(argv: list[str], verdict: Verdict, depth: int) -> None:
                 return
         if any(not a.startswith("-") for a in args) or not args:
             verdict.add(CONFIRM, f"{name}: runs a script or an interactive shell")
+        return
+    if name in _AWKS:
+        # awk is mostly used to pick columns; it is only risky when the program
+        # runs commands (system(), "cmd" | getline, print | "cmd"), writes files
+        # (print > "file") or edits in place (gawk -i inplace), or comes from a file.
+        if any(_AWK_RISKY.search(a) or a in ("-i", "-f") or a.startswith(("--include", "--file", "-i", "-f"))
+               or "inplace" in a for a in args):
+            verdict.add(CONFIRM, f"{name}: program can run commands or write files")
         return
     if name in _INTERPRETERS or re.match(r"^python3(\.\d+)?$", name):
         if any(a in ("-c", "-e", "-E", "--eval", "-Command", "-EncodedCommand") for a in args) or any(

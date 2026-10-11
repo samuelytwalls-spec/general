@@ -49,24 +49,61 @@ def test_destructive_command_waits_for_approval(cfg, llama, tmp_path):
     assert not os.path.exists(victim)
 
 
-def test_rejected_command_is_not_run_or_retried(cfg, llama):
+def test_rejection_stops_and_forces_a_final_answer(cfg, llama):
     os.makedirs(cfg.agent.workdir)
     victim = os.path.join(cfg.agent.workdir, "keep.txt")
     open(victim, "w").close()
     llama.script = [
         {"tool": "shell", "input": "rm keep.txt"},
-        {"tool": "shell", "input": "rm keep.txt"},  # model tries again
-        {"tool": "final_answer", "input": "You declined."},
+        {"tool": "final_answer", "input": "You declined, so keep.txt is still there."},
     ]
     agent = make_agent(cfg)
     sess = Session()
     assert agent.run_turn(sess, "delete keep.txt")["status"] == "needs_confirmation"
     res = agent.resolve(sess, False)
-    assert res["status"] == "done"
+    assert res["status"] == "done" and "declined" in res["answer"]
     assert os.path.exists(victim)
-    observations = [m["content"] for m in sess.messages if m["role"] == "user"]
-    assert any("REJECTED" in o for o in observations)
-    assert any("already rejected" in o for o in observations)
+    # after a rejection the model may only answer, not try variations
+    last = llama.chat_requests()[-1]
+    assert last["response_format"]["json_schema"]["schema"]["properties"]["tool"]["enum"] == ["final_answer"]
+    assert "REJECTED" in last["messages"][-1]["content"]
+
+
+def test_previously_rejected_command_is_not_offered_again(cfg, llama):
+    llama.script = [
+        {"tool": "shell", "input": "rm keep.txt"},
+        {"tool": "final_answer", "input": "ok"},
+        {"tool": "shell", "input": "rm keep.txt"},  # next turn, same command again
+        {"tool": "final_answer", "input": "you rejected that before"},
+    ]
+    agent = make_agent(cfg)
+    sess = Session()
+    agent.run_turn(sess, "delete keep.txt")
+    agent.resolve(sess, False)
+    res = agent.run_turn(sess, "please delete keep.txt now")
+    assert res["status"] == "done" and sess.pending is None
+    assert "already rejected" in sess.messages[-2]["content"]
+
+
+def test_repeated_identical_call_is_not_rerun(cfg, llama):
+    llama.script = [
+        {"tool": "shell", "input": "echo once"},
+        {"tool": "shell", "input": "echo once"},
+        {"tool": "final_answer", "input": "done"},
+    ]
+    res = make_agent(cfg).run_turn(Session(), "say once")
+    assert len([e for e in res["events"] if e["type"] == "tool_result"]) == 1
+    assert "already made exactly this call" in llama.chat_requests()[-1]["messages"][-1]["content"]
+
+
+def test_device_is_ignored_for_local_tools(cfg, llama):
+    llama.script = [
+        {"tool": "shell", "input": "true", "device": "Raspberry Pi 5"},
+        {"tool": "final_answer", "input": "ok"},
+    ]
+    res = make_agent(cfg).run_turn(Session(), "x")
+    call = [e for e in res["events"] if e["type"] == "tool_call"][0]
+    assert call["device"] is None
 
 
 def test_denied_command_is_refused(cfg, llama):

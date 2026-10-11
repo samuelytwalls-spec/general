@@ -42,7 +42,16 @@ Rules:
 - Commands that delete, overwrite, kill, install or reconfigure are shown to the user for approval automatically. Just propose the command; do not ask for permission in final_answer.
 - If a command is refused or rejected, do not try to get around it. Explain what happened in final_answer.
 - For questions about local documents use search_docs and name the files you used.
-- Keep "thought" to one short sentence. Be concise and factual in final_answer."""
+- Target exactly what was asked (for example `df -h /` for the root filesystem, not every mount).
+- Base final_answer only on the observations and copy numbers and names exactly as they appear there.
+- As soon as an observation answers the question, reply with final_answer. Never repeat the same tool call.
+- Keep "thought" to one short sentence. Be concise and factual in final_answer.
+
+Example:
+user: Is the ssh service running?
+assistant: {"thought": "Check the service state.", "tool": "shell", "input": "systemctl is-active ssh"}
+user: Observation from shell: exit_code: 0 stdout: active
+assistant: {"thought": "The output answers it.", "tool": "final_answer", "input": "Yes, ssh is running."}"""
 
 
 def action_schema(tools: list[str]) -> dict:
@@ -78,6 +87,8 @@ class Session:
     turn_start: int = 0
     steps: int = 0
     rejected: set = field(default_factory=set)
+    turn_calls: set = field(default_factory=set)
+    force_final: bool = False
     created: float = field(default_factory=time.time)
     updated: float = field(default_factory=time.time)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -213,6 +224,8 @@ class Agent:
         session.messages.append({"role": "user", "content": message})
         session.turn_start = len(session.messages) - 1
         session.steps = 0
+        session.turn_calls = set()
+        session.force_final = False
         return self._loop(session, [])
 
     def resolve(self, session: Session, approve: bool) -> dict:
@@ -226,24 +239,37 @@ class Agent:
             self._execute(session, pending.tool, pending.input, pending.device, events)
         else:
             session.rejected.add((pending.tool, pending.device, pending.input))
-            self._observe(session, pending.tool, "The user REJECTED this command. It was not run. Do not retry it.")
+            # Stop here: report back instead of letting the model try variations.
+            session.force_final = True
+            self._observe(session, pending.tool, "The user REJECTED this command, so it was not run. "
+                          "Tell the user in final_answer; you may suggest what they could do instead.")
         return self._loop(session, events)
 
     def _loop(self, session: Session, events: list) -> dict:
         session.updated = time.time()
         try:
             while True:
-                if session.steps >= self.cfg.agent.max_steps:
+                if session.force_final:
+                    session.force_final = False
+                    action = self._next_action(session, ["final_answer"])
+                elif session.steps >= self.cfg.agent.max_steps:
                     self._observe(session, "system", "Step limit reached. Give your final_answer now.")
                     action = self._next_action(session, ["final_answer"])
                 else:
                     action = self._next_action(session)
                 session.steps += 1
-                tool, arg, device = action["tool"], action["input"].strip(), (action.get("device") or "").strip() or None
+                tool, arg = action["tool"], action["input"].strip()
+                # Small models like to fill optional fields; device only matters for remote_exec.
+                device = (action.get("device") or "").strip() or None if tool == "remote_exec" else None
                 if tool == "final_answer":
                     events.append({"type": "answer", "text": arg})
                     return self._result(session, "done", events, answer=arg)
                 events.append({"type": "tool_call", "tool": tool, "input": arg, "device": device, "thought": action["thought"]})
+                if (tool, device, arg) in session.turn_calls:
+                    self._observe(session, tool, "You already made exactly this call; its result is above. "
+                                  "Use it, try something different, or give your final_answer.")
+                    continue
+                session.turn_calls.add((tool, device, arg))
 
                 if tool == "search_docs":
                     text = self._search_docs(arg)
@@ -268,7 +294,9 @@ class Agent:
                     self._observe(session, tool, "Empty command.")
                     continue
                 if (tool, device, arg) in session.rejected:
-                    self._observe(session, tool, "The user already rejected this exact command. Do not retry it.")
+                    session.force_final = True
+                    self._observe(session, tool, "The user already rejected this exact command, so it was not run. "
+                                  "Tell the user in final_answer.")
                     continue
                 verdict = safety.classify(
                     arg, self.cfg.agent.extra_confirm_patterns, self.cfg.agent.extra_deny_patterns
