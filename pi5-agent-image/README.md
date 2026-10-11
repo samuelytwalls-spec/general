@@ -156,7 +156,9 @@ model, also change `EMBED_POOLING` in `/etc/piagent/llama.env` on the Pi
 
 ## Flash the image
 
-The image fits on a 16 GB card. For speed, use a 32 GB+ A2-class card or an NVMe SSD.
+The image is about 5.5 GB, so an 8 GB card is enough; the root filesystem grows to
+fill the card on first boot. For speed and room for documents, use a 32 GB+
+A2-class card or an NVMe SSD.
 
 - **Raspberry Pi Imager** (Windows/macOS/Linux): *Choose OS → Use custom* → pick
   the `.img` (or `.img.xz`), choose the storage, then *Write*. You do not need
