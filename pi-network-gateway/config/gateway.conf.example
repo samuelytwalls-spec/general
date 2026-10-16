@@ -1,0 +1,69 @@
+# Pi Gateway configuration  (/etc/pi-gateway/gateway.conf)
+#
+# This file is read as bash, so quote values with spaces or special characters.
+# It contains the Wi-Fi password: keep it owned by root with mode 600.
+# Apply changes with:  sudo pi-gateway restart
+
+# ---------------------------------------------------------------------------
+# Upstream: where the Pi itself gets internet access (it joins your router).
+#   eth0  - Ethernet cable to the router (recommended, most reliable)
+#   wlan0 - the Pi's built-in Wi-Fi, connected to the router with NetworkManager
+# ---------------------------------------------------------------------------
+UPSTREAM_IFACE=eth0
+
+# ---------------------------------------------------------------------------
+# Access point: the hidden network your blocked devices join.
+#   AP_IFACE=wlan0  built-in Wi-Fi as the AP (use with UPSTREAM_IFACE=eth0)
+#   AP_IFACE=wlan1  a USB Wi-Fi adapter as the AP (upstream on wlan0 or eth0)
+#   AP_IFACE=uap0 + AP_VIRTUAL=yes
+#                   single-radio mode: a virtual AP on the same chip that is
+#                   connected upstream. The AP is forced onto the router's
+#                   channel. Works on the Pi 5, but is the least robust option.
+# ---------------------------------------------------------------------------
+AP_IFACE=wlan0
+AP_VIRTUAL=no
+AP_PARENT_IFACE=wlan0        # only used when AP_VIRTUAL=yes
+
+AP_SSID="PiGateway"
+AP_PASSWORD="change-this-password"   # 8-63 characters
+AP_HIDDEN=yes                # yes = SSID is not broadcast; clients must type it
+AP_SECURITY=wpa2             # wpa2 | wpa2-wpa3 | wpa3  (wpa2 works with everything)
+AP_BAND=2.4                  # 2.4 | 5   (ignored with AP_VIRTUAL=yes)
+AP_CHANNEL=6                 # 2.4 GHz: 1/6/11, 5 GHz: 36/40/44/48/149/153/157/161
+AP_COUNTRY=US                # two-letter regulatory domain - set this correctly
+AP_CLIENT_ISOLATION=no       # yes = clients on the AP cannot see each other
+AP_MAX_CLIENTS=16
+
+# ---------------------------------------------------------------------------
+# The private network handed out to devices on the AP. Must not overlap the
+# router's network (most routers use 192.168.0.x or 192.168.1.x).
+# ---------------------------------------------------------------------------
+LAN_ADDRESS=192.168.50.1
+LAN_PREFIX=24
+DHCP_START=192.168.50.10
+DHCP_END=192.168.50.200
+DHCP_LEASE=12h
+# Fixed addresses for specific devices: "MAC,IP,name" entries.
+STATIC_LEASES=(
+  # "aa:bb:cc:dd:ee:ff,192.168.50.20,game-console"
+)
+
+# ---------------------------------------------------------------------------
+# DNS
+# ---------------------------------------------------------------------------
+# Upstream resolvers, space separated. Empty = use whatever the Pi uses
+# (normally the router). Also used as Pi-hole's upstreams.
+UPSTREAM_DNS="1.1.1.1 9.9.9.9"
+
+# Pi-hole: network-wide ad blocking for everything on the AP.
+# yes = Pi-hole answers DNS on the AP, dnsmasq only does DHCP.
+PIHOLE=no
+PIHOLE_WEB_PASSWORD=""       # empty = leave Pi-hole's password unchanged
+
+# ---------------------------------------------------------------------------
+# Firewall
+# ---------------------------------------------------------------------------
+ALLOW_SSH_FROM_AP=yes        # allow SSH to the Pi from AP clients
+# yes = AP clients reach the internet only, not devices on the router's LAN
+# (192.168.x.x, 10.x.x.x, 172.16-31.x.x).
+BLOCK_UPSTREAM_LAN=no

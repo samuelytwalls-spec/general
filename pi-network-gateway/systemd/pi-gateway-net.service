@@ -1,0 +1,13 @@
+[Unit]
+Description=Pi Gateway: AP interface, NAT routing and firewall
+PartOf=pi-gateway.target
+After=network.target NetworkManager.service nftables.service
+Before=pi-gateway-hostapd.service pi-gateway-dhcp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/pi-gateway/net-up
+ExecStop=/usr/local/lib/pi-gateway/net-down
+# Single-radio mode waits up to 90 s for the upstream Wi-Fi link.
+TimeoutStartSec=150

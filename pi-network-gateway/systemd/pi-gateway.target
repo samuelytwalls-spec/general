@@ -1,0 +1,7 @@
+[Unit]
+Description=Pi Gateway: hidden Wi-Fi access point routed through this Pi
+Wants=pi-gateway-net.service pi-gateway-hostapd.service pi-gateway-dhcp.service
+After=network.target
+
+[Install]
+WantedBy=multi-user.target

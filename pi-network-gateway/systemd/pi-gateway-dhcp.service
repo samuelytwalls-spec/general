@@ -1,0 +1,11 @@
+[Unit]
+Description=Pi Gateway: DHCP and DNS for AP clients (dnsmasq)
+PartOf=pi-gateway.target
+BindsTo=pi-gateway-net.service
+After=pi-gateway-net.service pi-gateway-hostapd.service pihole-FTL.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/run/pi-gateway/dnsmasq.conf
+Restart=on-failure
+RestartSec=5

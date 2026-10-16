@@ -1,0 +1,79 @@
+#!/bin/bash
+# Installs (if needed) and configures Pi-hole to serve DNS to AP clients.
+# Usage: pihole-setup enable | disable
+set -euo pipefail
+
+PIGW_LIB=${PIGW_LIB:-/usr/local/lib/pi-gateway}
+# shellcheck source=common.sh
+source "$PIGW_LIB/common.sh"
+load_config
+
+ftl_set() {
+    pihole-FTL --config "$1" "$2" >/dev/null || warn "could not set Pi-hole option $1"
+}
+
+enable_pihole() {
+    if ! command -v pihole >/dev/null; then
+        log "installing Pi-hole (unattended)"
+        install -d -m 755 /etc/pihole
+        # Pre-seed answers for the unattended installer. Pi-hole v6 migrates
+        # these into pihole.toml on first start; we set the options again below.
+        if [[ ! -e /etc/pihole/setupVars.conf ]]; then
+            local dns1 dns2
+            read -r dns1 dns2 _ <<<"$UPSTREAM_DNS"
+            cat >/etc/pihole/setupVars.conf <<EOF
+PIHOLE_INTERFACE=$AP_IFACE
+PIHOLE_DNS_1=${dns1}
+PIHOLE_DNS_2=${dns2:-$dns1}
+QUERY_LOGGING=true
+INSTALL_WEB_SERVER=true
+INSTALL_WEB_INTERFACE=true
+LIGHTTPD_ENABLED=true
+CACHE_SIZE=10000
+DNS_FQDN_REQUIRED=true
+DNS_BOGUS_PRIV=true
+DNSMASQ_LISTENING=local
+BLOCKING_ENABLED=true
+EOF
+        fi
+        local installer
+        installer=$(mktemp /tmp/pihole-install.XXXXXX.sh)
+        curl -fsSL https://install.pi-hole.net -o "$installer"
+        PIHOLE_SKIP_OS_CHECK=${PIHOLE_SKIP_OS_CHECK:-false} bash "$installer" --unattended
+        rm -f "$installer"
+    fi
+
+    command -v pihole-FTL >/dev/null || die "Pi-hole install failed (pihole-FTL not found)"
+
+    # Answer queries from directly connected subnets (the AP and the Pi's own
+    # LAN), use our upstream resolvers, and leave DHCP to pi-gateway's dnsmasq.
+    local json="" d
+    for d in $UPSTREAM_DNS; do json+="${json:+,}\"$d\""; done
+    ftl_set dns.listeningMode LOCAL
+    ftl_set dns.upstreams "[$json]"
+    ftl_set dhcp.active false
+
+    if [[ -n $PIHOLE_WEB_PASSWORD ]]; then
+        pihole setpassword "$PIHOLE_WEB_PASSWORD" >/dev/null 2>&1 \
+            || pihole -a -p "$PIHOLE_WEB_PASSWORD" >/dev/null 2>&1 \
+            || warn "could not set the Pi-hole web password"
+    fi
+
+    systemctl enable pihole-FTL >/dev/null 2>&1 || true
+    systemctl restart pihole-FTL
+    log "Pi-hole ready: admin page at http://$LAN_ADDRESS/admin (from the hidden network)"
+}
+
+disable_pihole() {
+    if systemctl list-unit-files pihole-FTL.service >/dev/null 2>&1; then
+        # Free port 53 so pi-gateway's dnsmasq can answer DNS again.
+        systemctl disable --now pihole-FTL >/dev/null 2>&1 || true
+        log "Pi-hole stopped and disabled (still installed; 'pihole uninstall' removes it)"
+    fi
+}
+
+case ${1:-} in
+    enable)  enable_pihole ;;
+    disable) disable_pihole ;;
+    *) die "usage: $0 enable|disable" ;;
+esac

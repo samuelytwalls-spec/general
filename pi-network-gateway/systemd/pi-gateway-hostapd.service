@@ -1,0 +1,11 @@
+[Unit]
+Description=Pi Gateway: hidden access point (hostapd)
+PartOf=pi-gateway.target
+BindsTo=pi-gateway-net.service
+After=pi-gateway-net.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/hostapd /run/pi-gateway/hostapd.conf
+Restart=on-failure
+RestartSec=5
