@@ -120,7 +120,9 @@ A hidden network does not appear in Wi-Fi lists, so you add it by hand:
   the network settings.
 
 The device gets an address in `192.168.50.x` and uses the Pi (`192.168.50.1`)
-as its gateway and DNS server.
+as its gateway and DNS server. If your router already uses `192.168.50.x`, the
+installer picks a free subnet instead, such as `10.50.0.x`, and
+`sudo pi-gateway status` shows which one.
 
 ## Pi-hole
 
@@ -147,7 +149,7 @@ Pi-hole installs with its official unattended installer from
 ## Day-to-day commands
 
 ```
-pi-gateway status            services, addresses, channel, number of clients
+sudo pi-gateway status       services, addresses, channel, number of clients
 sudo pi-gateway clients      connected devices: MAC, IP, hostname, signal
 sudo pi-gateway qr           QR code for joining the hidden network
 sudo pi-gateway set-password change the Wi-Fi password (prompts)
@@ -157,7 +159,7 @@ sudo pi-gateway kick MAC     disconnect a device
 sudo pi-gateway pihole on|off
 sudo pi-gateway config       edit gateway.conf, validate it, restart
 sudo pi-gateway restart | start | stop
-pi-gateway logs              follow the logs of all gateway services
+sudo pi-gateway logs         follow the logs of all gateway services
 ```
 
 ## Configuration reference
@@ -236,10 +238,10 @@ Files:
 |---|---|
 | `pi-gateway-hostapd` fails | `journalctl -u pi-gateway-hostapd -b`. Typical causes: wrong `AP_COUNTRY`, a channel not allowed in your country, or a USB adapter without AP mode. Try `AP_BAND=2.4` and `AP_CHANNEL=6`. |
 | Device can't find the network | It is hidden: add it by hand or use the QR code. Check the SSID's spelling and case. To rule out the hidden setting, try `sudo pi-gateway hidden off`. |
-| Device connects but has no internet | `pi-gateway status`: the upstream needs an address and there must be a default route. Run `sudo nft list table inet pigw`. If a firewall such as ufw is installed with a forward policy of DROP, allow forwarding from the AP interface to the upstream interface. |
+| Device connects but has no internet | `sudo pi-gateway status`: the upstream needs an address and there must be a default route. Run `sudo nft list table inet pigw`. If a firewall such as ufw is installed with a forward policy of DROP, allow forwarding from the AP interface to the upstream interface. |
 | Connects, gets no IP | `journalctl -u pi-gateway-dhcp -b`. Check whether another DHCP or DNS server (stock dnsmasq, Pi-hole DHCP) is running. |
 | Single-radio mode stops working after a while | The router changed channel. Run `sudo pi-gateway restart`, or set a fixed channel on the router. |
-| "upstream address is inside …" warning | Your router uses the same subnet. Change `LAN_ADDRESS` and `DHCP_*`, for example to `10.50.0.x`. |
+| `pi-gateway-net` fails with "overlaps … on wlan0/eth0" | The hidden network uses the same subnet as your router. ASUS routers, for example, use `192.168.50.x`, which is also the default here. Re-run `sudo ./install.sh` and it moves the hidden network to a free subnet automatically, or change `LAN_ADDRESS` and `DHCP_*` by hand, for example to `10.50.0.x`. |
 | Pi-hole page doesn't load | `systemctl status pihole-FTL`. Open `http://192.168.50.1/admin` from a device on the hidden network. |
 
 ## Uninstall

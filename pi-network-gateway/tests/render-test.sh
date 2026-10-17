@@ -123,5 +123,10 @@ echo "case: freq2chan"
 [[ $(freq2chan 2437) == 6 && $(freq2chan 2484) == 14 && $(freq2chan 5180) == 36 && $(freq2chan 5745) == 149 ]] \
     || { echo "  FAIL: freq2chan"; fails=$((fails+1)); }
 
+echo "case: subnets_overlap"
+subnets_overlap 192.168.50.1/24 192.168.50.38/24 || { echo "  FAIL: same /24 not detected"; fails=$((fails+1)); }
+subnets_overlap 192.168.50.1/24 192.168.0.5/16   || { echo "  FAIL: /16 containing /24 not detected"; fails=$((fails+1)); }
+! subnets_overlap 10.50.0.1/24 192.168.50.38/24  || { echo "  FAIL: disjoint subnets reported as overlapping"; fails=$((fails+1)); }
+
 if ((fails)); then echo "$fails check(s) failed"; exit 1; fi
 echo "all checks passed"

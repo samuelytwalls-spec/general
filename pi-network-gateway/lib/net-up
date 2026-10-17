@@ -52,6 +52,11 @@ fi
     || die "$AP_IFACE is not a Wi-Fi interface"
 
 # --- Addressing --------------------------------------------------------------
+# A clash with the router's network breaks routing for the whole Pi, so refuse.
+if clash=$(lan_conflict); then
+    die "the hidden network $LAN_ADDRESS/$LAN_PREFIX overlaps ${clash#* } on ${clash%% *}." \
+        "Pick another subnet: set LAN_ADDRESS/DHCP_START/DHCP_END in $PIGW_CONF (e.g. 10.50.0.x), or re-run install.sh"
+fi
 ip addr flush dev "$AP_IFACE"
 ip addr add "$LAN_ADDRESS/$LAN_PREFIX" dev "$AP_IFACE"
 ip link set "$AP_IFACE" up
@@ -59,8 +64,6 @@ ip link set "$AP_IFACE" up
 up_addr=$(ip -4 -o addr show dev "$UPSTREAM_IFACE" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }')
 if [[ -z $up_addr ]]; then
     warn "$UPSTREAM_IFACE has no IPv4 address yet; clients will get internet once it does"
-elif in_lan "$up_addr"; then
-    warn "upstream address $up_addr is inside $LAN_ADDRESS/$LAN_PREFIX - change LAN_ADDRESS to another subnet"
 fi
 
 # --- Routing + firewall ------------------------------------------------------

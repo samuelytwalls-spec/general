@@ -23,6 +23,13 @@ while (($#)); do
 done
 
 ((EUID == 0)) || die "run as root: sudo $0"
+
+# Keep a log, and keep going if the SSH session drops (it does when the Wi-Fi
+# the session runs over becomes the access point).
+LOG=/var/log/pi-gateway-install.log
+trap '' HUP
+exec > >(tee --output-error=warn -a "$LOG") 2>&1
+log "install started $(date -Is), log: $LOG"
 grep -qiE 'debian|raspbian' /etc/os-release || die "needs Raspberry Pi OS / Debian"
 model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)
 [[ $model == *"Raspberry Pi 5"* ]] || warn "this is '$model', not a Raspberry Pi 5 - continuing anyway"
@@ -39,7 +46,6 @@ ask_yn() {  # ask_yn "question" y|n  -> exit status
     [[ ${a,,} == y* ]]
 }
 random_password() { LC_ALL=C tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 16 || true; }
-iface_ip() { ip -4 -o addr show dev "$1" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }'; }
 wifi_connected() { iw dev "$1" link 2>/dev/null | grep -q '^Connected'; }
 
 # --- Packages ----------------------------------------------------------------
@@ -118,15 +124,6 @@ wizard() {
     ask country "Wi-Fi country code" "$country"
     set_conf_value AP_COUNTRY "${country^^}"
 
-    # Pick a client subnet that does not collide with the router's.
-    local up_ip
-    up_ip=$(iface_ip "$( [[ $mode == 1 ]] && echo eth0 || echo wlan0 )")
-    if [[ $up_ip == 192.168.50.* ]]; then
-        set_conf_value LAN_ADDRESS 10.50.0.1
-        set_conf_value DHCP_START 10.50.0.10
-        set_conf_value DHCP_END 10.50.0.200
-    fi
-
     if ask_yn "Install Pi-hole for ad/tracker blocking on the hidden network?" n; then
         set_conf_value PIHOLE yes
         read -r -s -p "Pi-hole admin password (empty = Pi-hole default): " pw; echo
@@ -148,6 +145,14 @@ PIGW_CONF=/etc/pi-gateway/gateway.conf
 chmod 600 "$PIGW_CONF"
 load_config
 validate_config
+
+# The hidden network must not reuse the router's subnet (ASUS routers, for
+# example, use 192.168.50.x - the default here). Move it if it clashes.
+if clash=$(lan_conflict); then
+    warn "$LAN_ADDRESS/$LAN_PREFIX clashes with ${clash#* } on ${clash%% *} (your router's network)"
+    pick_free_lan || die "no free subnet found - set LAN_ADDRESS/DHCP_* in $PIGW_CONF by hand"
+    log "hidden network moved to $LAN_ADDRESS/$LAN_PREFIX (DHCP $DHCP_START-$DHCP_END)"
+fi
 
 # --- Files -------------------------------------------------------------------
 log "installing files"

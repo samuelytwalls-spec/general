@@ -16,7 +16,8 @@ is_yes() { [[ ${1,,} =~ ^(y|yes|true|1|on)$ ]]; }
 # --- Config ------------------------------------------------------------------
 
 load_config() {
-    [[ -r $PIGW_CONF ]] || die "config not found: $PIGW_CONF (run install.sh first)"
+    [[ -e $PIGW_CONF ]] || die "config not found: $PIGW_CONF (run install.sh first)"
+    [[ -r $PIGW_CONF ]] || die "cannot read $PIGW_CONF - run this command with sudo"
 
     # Defaults for anything missing from older config files.
     UPSTREAM_IFACE=eth0
@@ -146,6 +147,45 @@ set_conf_value() {
     ' "$PIGW_CONF" >"$tmp"
     chmod 600 "$tmp"
     mv "$tmp" "$PIGW_CONF"
+}
+
+# Do two networks overlap?  subnets_overlap 192.168.50.1/24 192.168.50.38/24
+subnets_overlap() {
+    local a=${1%/*} pa=${1#*/} b=${2%/*} pb=${2#*/}
+    local p=$(( pa < pb ? pa : pb ))
+    local mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF ))
+    (( ($(ip2int "$a") & mask) == ($(ip2int "$b") & mask) ))
+}
+
+# Print the first address on another interface that clashes with the AP subnet
+# (for example the router's network also being 192.168.50.x). Ignores AP_IFACE.
+lan_conflict() {
+    local ifc cidr
+    while read -r ifc cidr; do
+        [[ $ifc == "$AP_IFACE" || $ifc == lo ]] && continue
+        if subnets_overlap "$LAN_ADDRESS/$LAN_PREFIX" "$cidr"; then
+            echo "$ifc $cidr"
+            return 0
+        fi
+    done < <(ip -4 -o addr show 2>/dev/null | awk '{ print $2, $4 }')
+    return 1
+}
+
+# Move LAN_ADDRESS/DHCP_* to the first candidate /24 that clashes with nothing.
+pick_free_lan() {
+    local base
+    for base in 192.168.50 10.50.0 172.20.50 192.168.77 10.77.0; do
+        LAN_ADDRESS=$base.1 LAN_PREFIX=24
+        if ! lan_conflict >/dev/null; then
+            set_conf_value LAN_ADDRESS "$base.1"
+            set_conf_value LAN_PREFIX 24
+            set_conf_value DHCP_START "$base.10"
+            set_conf_value DHCP_END "$base.200"
+            load_config
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Frequency in MHz -> channel number.
