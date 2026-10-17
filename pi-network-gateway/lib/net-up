@@ -1,0 +1,82 @@
+#!/bin/bash
+# Brings up the AP interface, routing and firewall, and renders the hostapd
+# and dnsmasq configs. Run by pi-gateway-net.service before hostapd/dnsmasq.
+set -euo pipefail
+
+PIGW_LIB=${PIGW_LIB:-/usr/local/lib/pi-gateway}
+# shellcheck source=common.sh
+source "$PIGW_LIB/common.sh"
+# shellcheck source=render.sh
+source "$PIGW_LIB/render.sh"
+
+load_config
+validate_config
+
+install -d -m 755 "$PIGW_RUN" "$PIGW_STATE"
+install -d -m 700 "$PIGW_RUN/hostapd"
+
+command -v rfkill >/dev/null && rfkill unblock wlan || true
+iw reg set "$AP_COUNTRY" 2>/dev/null || true
+
+# --- Single-radio mode: virtual AP on the chip that is connected upstream ----
+if is_yes "$AP_VIRTUAL"; then
+    [[ -d /sys/class/net/$AP_PARENT_IFACE ]] || die "AP_PARENT_IFACE $AP_PARENT_IFACE does not exist"
+
+    # The AP must share the upstream channel, so wait for the uplink first.
+    freq=""
+    for _ in $(seq 1 90); do
+        freq=$(iw dev "$AP_PARENT_IFACE" link 2>/dev/null | awk '/freq:/ { print int($2); exit }')
+        [[ -n $freq ]] && break
+        sleep 1
+    done
+    [[ -n $freq ]] || die "$AP_PARENT_IFACE is not connected to a Wi-Fi network after 90s (connect it with nmcli first)"
+    RADIO_CHANNEL=$(freq2chan "$freq") || die "unsupported upstream frequency $freq MHz"
+    if (( freq < 3000 )); then RADIO_BAND=2.4; else RADIO_BAND=5; fi
+    RADIO_NARROW=yes
+    if [[ $RADIO_BAND == 5 ]] && ! (( (RADIO_CHANNEL >= 36 && RADIO_CHANNEL <= 48) || RADIO_CHANNEL >= 149 )); then
+        warn "upstream uses DFS channel $RADIO_CHANNEL; the AP may fail to start. Set the router to a non-DFS channel."
+    fi
+    log "single-radio mode: following upstream on channel $RADIO_CHANNEL ($RADIO_BAND GHz)"
+
+    if [[ ! -d /sys/class/net/$AP_IFACE ]]; then
+        iw dev "$AP_PARENT_IFACE" interface add "$AP_IFACE" type __ap
+        # Give the virtual interface its own locally-administered MAC.
+        parent_mac=$(cat "/sys/class/net/$AP_PARENT_IFACE/address")
+        first=$(( 16#${parent_mac:0:2} ^ 0x02 ))
+        ip link set dev "$AP_IFACE" address "$(printf '%02x' "$first")${parent_mac:2}"
+    fi
+fi
+
+[[ -d /sys/class/net/$AP_IFACE ]] || die "AP interface $AP_IFACE does not exist (USB adapter plugged in?)"
+[[ -d /sys/class/net/$AP_IFACE/wireless || -d /sys/class/net/$AP_IFACE/phy80211 ]] \
+    || die "$AP_IFACE is not a Wi-Fi interface"
+
+# --- Addressing --------------------------------------------------------------
+ip addr flush dev "$AP_IFACE"
+ip addr add "$LAN_ADDRESS/$LAN_PREFIX" dev "$AP_IFACE"
+ip link set "$AP_IFACE" up
+
+up_addr=$(ip -4 -o addr show dev "$UPSTREAM_IFACE" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }')
+if [[ -z $up_addr ]]; then
+    warn "$UPSTREAM_IFACE has no IPv4 address yet; clients will get internet once it does"
+elif in_lan "$up_addr"; then
+    warn "upstream address $up_addr is inside $LAN_ADDRESS/$LAN_PREFIX - change LAN_ADDRESS to another subnet"
+fi
+
+# --- Routing + firewall ------------------------------------------------------
+# Remember the original value once, so net-down can restore it.
+[[ -e $PIGW_RUN/ip_forward.prev ]] || cat /proc/sys/net/ipv4/ip_forward >"$PIGW_RUN/ip_forward.prev"
+sysctl -q -w net.ipv4.ip_forward=1
+
+render_nft "$PIGW_RUN/rules.nft"
+nft -f "$PIGW_RUN/rules.nft"
+
+# --- Daemon configs ----------------------------------------------------------
+render_hostapd "$PIGW_RUN/hostapd.conf"
+render_dnsmasq "$PIGW_RUN/dnsmasq.conf"
+
+if is_yes "$PIHOLE" && ! systemctl is-enabled --quiet pihole-FTL.service 2>/dev/null; then
+    warn "PIHOLE=yes but pihole-FTL is not enabled; clients will have no DNS. Run: sudo pi-gateway pihole on"
+fi
+
+log "AP $AP_IFACE at $LAN_ADDRESS/$LAN_PREFIX, routing via $UPSTREAM_IFACE (Pi-hole: $PIHOLE)"
