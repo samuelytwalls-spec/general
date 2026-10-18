@@ -1,0 +1,117 @@
+#!/bin/bash
+# Turns the Pi 5's USB-C port into a USB network adapter for the computer it
+# is plugged into (Linux USB gadget, configfs). Usage: usb-gadget up|down
+#
+# Two USB configurations so every OS finds a driver it already has:
+#   config 1: RNDIS - Windows 10/11 (bound automatically via MS OS descriptors)
+#   config 2: CDC ECM - Linux, macOS, ChromeOS
+# Both network interfaces (usb0, usb1) are joined in the bridge $USB_BRIDGE,
+# so the rest of pi-gateway sees one interface whichever the computer uses.
+#
+# Needs dtoverlay=dwc2,dr_mode=peripheral in /boot/firmware/config.txt
+# (install.sh adds it; takes effect after a reboot).
+set -euo pipefail
+
+PIGW_LIB=${PIGW_LIB:-/usr/local/lib/pi-gateway}
+# shellcheck source=common.sh
+source "$PIGW_LIB/common.sh"
+
+G=/sys/kernel/config/usb_gadget/pigw
+USB_BRIDGE=${USB_BRIDGE:-pigw0}
+
+# Stable, locally administered MAC addresses derived from the Pi's serial, so
+# the computer keeps treating it as the same network adapter across reboots.
+mac_for() {  # mac_for SALT
+    local h
+    h=$(printf '%s-%s' "$(serial)" "$1" | sha256sum | cut -c1-10)
+    printf '02:%s:%s:%s:%s:%s' "${h:0:2}" "${h:2:2}" "${h:4:2}" "${h:6:2}" "${h:8:2}"
+}
+serial() {
+    awk '/^Serial/ { print $3; exit }' /proc/cpuinfo 2>/dev/null | grep . \
+        || cat /etc/machine-id
+}
+
+gadget_down() {
+    if [[ -d $G ]]; then
+        echo "" >"$G/UDC" 2>/dev/null || true
+        rm -f "$G/os_desc/c.1"
+        local c f
+        for c in "$G"/configs/*; do
+            [[ -d $c ]] || continue
+            find "$c" -maxdepth 1 -type l -delete
+            rmdir "$c"/strings/* 2>/dev/null || true
+            rmdir "$c"
+        done
+        for f in "$G"/functions/*; do [[ -d $f ]] && rmdir "$f"; done
+        rmdir "$G"/strings/* 2>/dev/null || true
+        rmdir "$G"
+    fi
+    ip link del "$USB_BRIDGE" 2>/dev/null || true
+}
+
+gadget_up() {
+    modprobe libcomposite
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+
+    local udc="" u
+    for u in /sys/class/udc/*; do [[ -e $u ]] && { udc=${u##*/}; break; }; done
+    [[ -n $udc ]] || die "the USB-C port is not in device mode. Add 'dtoverlay=dwc2,dr_mode=peripheral'" \
+        "under [all] in /boot/firmware/config.txt (install.sh does this) and reboot."
+
+    gadget_down
+
+    mkdir "$G"
+    cd "$G"
+    echo 0x1d6b >idVendor          # Linux Foundation
+    echo 0x0104 >idProduct         # Multifunction Composite Gadget
+    echo 0x0100 >bcdDevice
+    echo 0x0200 >bcdUSB
+    echo 0xEF >bDeviceClass        # Miscellaneous / Interface Association
+    echo 0x02 >bDeviceSubClass
+    echo 0x01 >bDeviceProtocol
+
+    mkdir -p strings/0x409
+    serial >strings/0x409/serialnumber
+    echo "Raspberry Pi" >strings/0x409/manufacturer
+    echo "Pi Gateway" >strings/0x409/product
+
+    # Microsoft OS descriptors: make Windows bind its built-in RNDIS driver.
+    echo 1 >os_desc/use
+    echo 0xcd >os_desc/b_vendor_code
+    echo MSFT100 >os_desc/qw_sign
+
+    mkdir functions/rndis.usb0 functions/ecm.usb0
+    mac_for rndis-host >functions/rndis.usb0/host_addr
+    mac_for rndis-dev  >functions/rndis.usb0/dev_addr
+    mac_for ecm-host   >functions/ecm.usb0/host_addr
+    mac_for ecm-dev    >functions/ecm.usb0/dev_addr
+    echo RNDIS   >functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+    echo 5162001 >functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+
+    mkdir -p configs/c.1/strings/0x409 configs/c.2/strings/0x409
+    echo "RNDIS (Windows)" >configs/c.1/strings/0x409/configuration
+    echo "CDC ECM (Linux/macOS)" >configs/c.2/strings/0x409/configuration
+    echo 500 >configs/c.1/MaxPower
+    echo 500 >configs/c.2/MaxPower
+    ln -s functions/rndis.usb0 configs/c.1/
+    ln -s functions/ecm.usb0 configs/c.2/
+    ln -s configs/c.1 os_desc/
+
+    echo "$udc" >UDC
+
+    local ifn
+    ip link add "$USB_BRIDGE" type bridge 2>/dev/null || true
+    for f in rndis.usb0 ecm.usb0; do
+        ifn=$(<"functions/$f/ifname")
+        ip link set "$ifn" master "$USB_BRIDGE"
+        ip link set "$ifn" up
+    done
+    ip link set "$USB_BRIDGE" up
+    log "USB gadget ready on $udc (RNDIS + CDC ECM, bridged as $USB_BRIDGE)"
+}
+
+case ${1:-} in
+    up)   gadget_up ;;
+    down) gadget_down ;;
+    *) die "usage: $0 up|down" ;;
+esac

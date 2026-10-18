@@ -33,8 +33,14 @@ if is_yes "$AP_VIRTUAL"; then
     RADIO_CHANNEL=$(freq2chan "$freq") || die "unsupported upstream frequency $freq MHz"
     if (( freq < 3000 )); then RADIO_BAND=2.4; else RADIO_BAND=5; fi
     RADIO_NARROW=yes
+    # Remember the channel even if we fail below, so pi-gateway-watch can
+    # restart the gateway once the router moves to a usable channel.
+    echo "$RADIO_CHANNEL" >"$PIGW_RUN/upstream-channel"
     if [[ $RADIO_BAND == 5 ]] && ! (( (RADIO_CHANNEL >= 36 && RADIO_CHANNEL <= 48) || RADIO_CHANNEL >= 149 )); then
-        warn "upstream uses DFS channel $RADIO_CHANNEL; the AP may fail to start. Set the router to a non-DFS channel."
+        die "the router is on 5 GHz DFS (radar) channel $RADIO_CHANNEL. The Pi cannot run an access point" \
+            "there, and in single-radio mode the AP must use the router's channel. Set the router's 5 GHz" \
+            "channel to 36, 40, 44, 48 or 149-165, or connect wlan0 to the router's 2.4 GHz network." \
+            "The gateway restarts by itself once the router's channel changes."
     fi
     log "single-radio mode: following upstream on channel $RADIO_CHANNEL ($RADIO_BAND GHz)"
 
@@ -47,11 +53,23 @@ if is_yes "$AP_VIRTUAL"; then
     fi
 fi
 
-[[ -d /sys/class/net/$AP_IFACE ]] || die "AP interface $AP_IFACE does not exist (USB adapter plugged in?)"
-[[ -d /sys/class/net/$AP_IFACE/wireless || -d /sys/class/net/$AP_IFACE/phy80211 ]] \
-    || die "$AP_IFACE is not a Wi-Fi interface"
+# --- USB mode: the Pi's USB-C port becomes a network adapter for the computer
+if [[ $CLIENT_LINK == usb ]]; then
+    USB_BRIDGE=$AP_IFACE "$PIGW_LIB/usb-gadget" up
+fi
+
+[[ -d /sys/class/net/$AP_IFACE ]] || die "interface $AP_IFACE does not exist (USB adapter or cable plugged in?)"
+if is_wifi_link; then
+    [[ -d /sys/class/net/$AP_IFACE/wireless || -d /sys/class/net/$AP_IFACE/phy80211 ]] \
+        || die "$AP_IFACE is not a Wi-Fi interface"
+fi
 
 # --- Addressing --------------------------------------------------------------
+# A clash with the router's network breaks routing for the whole Pi, so refuse.
+if clash=$(lan_conflict); then
+    die "the hidden network $LAN_ADDRESS/$LAN_PREFIX overlaps ${clash#* } on ${clash%% *}." \
+        "Pick another subnet: set LAN_ADDRESS/DHCP_START/DHCP_END in $PIGW_CONF (e.g. 10.50.0.x), or re-run install.sh"
+fi
 ip addr flush dev "$AP_IFACE"
 ip addr add "$LAN_ADDRESS/$LAN_PREFIX" dev "$AP_IFACE"
 ip link set "$AP_IFACE" up
@@ -59,8 +77,6 @@ ip link set "$AP_IFACE" up
 up_addr=$(ip -4 -o addr show dev "$UPSTREAM_IFACE" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }')
 if [[ -z $up_addr ]]; then
     warn "$UPSTREAM_IFACE has no IPv4 address yet; clients will get internet once it does"
-elif in_lan "$up_addr"; then
-    warn "upstream address $up_addr is inside $LAN_ADDRESS/$LAN_PREFIX - change LAN_ADDRESS to another subnet"
 fi
 
 # --- Routing + firewall ------------------------------------------------------
@@ -72,11 +88,16 @@ render_nft "$PIGW_RUN/rules.nft"
 nft -f "$PIGW_RUN/rules.nft"
 
 # --- Daemon configs ----------------------------------------------------------
-render_hostapd "$PIGW_RUN/hostapd.conf"
+# pi-gateway-hostapd only runs when hostapd.conf exists (Wi-Fi mode).
+if is_wifi_link; then
+    render_hostapd "$PIGW_RUN/hostapd.conf"
+else
+    rm -f "$PIGW_RUN/hostapd.conf"
+fi
 render_dnsmasq "$PIGW_RUN/dnsmasq.conf"
 
 if is_yes "$PIHOLE" && ! systemctl is-enabled --quiet pihole-FTL.service 2>/dev/null; then
     warn "PIHOLE=yes but pihole-FTL is not enabled; clients will have no DNS. Run: sudo pi-gateway pihole on"
 fi
 
-log "AP $AP_IFACE at $LAN_ADDRESS/$LAN_PREFIX, routing via $UPSTREAM_IFACE (Pi-hole: $PIHOLE)"
+log "clients via $CLIENT_LINK on $AP_IFACE at $LAN_ADDRESS/$LAN_PREFIX, routing via $UPSTREAM_IFACE (Pi-hole: $PIHOLE)"

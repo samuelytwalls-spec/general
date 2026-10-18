@@ -16,9 +16,11 @@ is_yes() { [[ ${1,,} =~ ^(y|yes|true|1|on)$ ]]; }
 # --- Config ------------------------------------------------------------------
 
 load_config() {
-    [[ -r $PIGW_CONF ]] || die "config not found: $PIGW_CONF (run install.sh first)"
+    [[ -e $PIGW_CONF ]] || die "config not found: $PIGW_CONF (run install.sh first)"
+    [[ -r $PIGW_CONF ]] || die "cannot read $PIGW_CONF - run this command with sudo"
 
     # Defaults for anything missing from older config files.
+    CLIENT_LINK=wifi
     UPSTREAM_IFACE=eth0
     AP_IFACE=wlan0 AP_VIRTUAL=no AP_PARENT_IFACE=wlan0
     AP_SSID=PiGateway AP_PASSWORD="" AP_HIDDEN=yes AP_SECURITY=wpa2
@@ -32,7 +34,14 @@ load_config() {
 
     # shellcheck source=/dev/null
     source "$PIGW_CONF"
+
+    # USB mode: the gadget's interfaces are bridged into one fixed interface.
+    if [[ $CLIENT_LINK == usb ]]; then
+        AP_IFACE=pigw0 AP_VIRTUAL=no
+    fi
 }
+
+is_wifi_link() { [[ $CLIENT_LINK == wifi ]]; }
 
 valid_ipv4() {
     local ip=$1 o
@@ -68,6 +77,7 @@ valid_iface() { [[ $1 =~ ^[A-Za-z0-9_.-]{1,15}$ ]]; }
 
 validate_config() {
     local errors=() e
+    [[ $CLIENT_LINK =~ ^(wifi|usb|ethernet)$ ]] || errors+=("CLIENT_LINK must be wifi, usb or ethernet")
     valid_iface "$UPSTREAM_IFACE" || errors+=("UPSTREAM_IFACE is not a valid interface name")
     valid_iface "$AP_IFACE"       || errors+=("AP_IFACE is not a valid interface name")
     [[ $UPSTREAM_IFACE != "$AP_IFACE" ]] || errors+=("UPSTREAM_IFACE and AP_IFACE must differ")
@@ -75,26 +85,29 @@ validate_config() {
         valid_iface "$AP_PARENT_IFACE" || errors+=("AP_PARENT_IFACE is not a valid interface name")
     fi
 
-    local ssid_len
-    ssid_len=$(printf '%s' "$AP_SSID" | wc -c)
-    (( ssid_len >= 1 && ssid_len <= 32 )) || errors+=("AP_SSID must be 1-32 bytes")
-    [[ $AP_SSID != *$'\n'* ]] || errors+=("AP_SSID must not contain newlines")
-    (( ${#AP_PASSWORD} >= 8 && ${#AP_PASSWORD} <= 63 )) || errors+=("AP_PASSWORD must be 8-63 characters")
-    [[ $AP_PASSWORD =~ ^[[:print:]]+$ ]] || errors+=("AP_PASSWORD must be printable ASCII")
-    [[ $AP_PASSWORD != "change-this-password" ]] || errors+=("AP_PASSWORD is still the example value")
+    # Hidden-network settings only matter when devices join over Wi-Fi.
+    if is_wifi_link; then
+        local ssid_len
+        ssid_len=$(printf '%s' "$AP_SSID" | wc -c)
+        (( ssid_len >= 1 && ssid_len <= 32 )) || errors+=("AP_SSID must be 1-32 bytes")
+        [[ $AP_SSID != *$'\n'* ]] || errors+=("AP_SSID must not contain newlines")
+        (( ${#AP_PASSWORD} >= 8 && ${#AP_PASSWORD} <= 63 )) || errors+=("AP_PASSWORD must be 8-63 characters")
+        [[ $AP_PASSWORD =~ ^[[:print:]]+$ ]] || errors+=("AP_PASSWORD must be printable ASCII")
+        [[ $AP_PASSWORD != "change-this-password" ]] || errors+=("AP_PASSWORD is still the example value")
 
-    [[ $AP_SECURITY =~ ^(wpa2|wpa2-wpa3|wpa3)$ ]] || errors+=("AP_SECURITY must be wpa2, wpa2-wpa3 or wpa3")
-    [[ $AP_BAND =~ ^(2\.4|5)$ ]] || errors+=("AP_BAND must be 2.4 or 5")
-    [[ $AP_CHANNEL =~ ^[0-9]+$ ]] || errors+=("AP_CHANNEL must be a number")
-    if [[ $AP_BAND == 2.4 && $AP_CHANNEL =~ ^[0-9]+$ ]] && ! (( AP_CHANNEL >= 1 && AP_CHANNEL <= 13 )); then
-        errors+=("AP_CHANNEL must be 1-13 on 2.4 GHz")
-    fi
-    if [[ $AP_BAND == 5 && $AP_CHANNEL =~ ^[0-9]+$ ]] && ! (( (AP_CHANNEL >= 36 && AP_CHANNEL <= 48) || (AP_CHANNEL >= 149 && AP_CHANNEL <= 165) )); then
-        errors+=("AP_CHANNEL on 5 GHz must be a non-DFS channel (36-48 or 149-165)")
+        [[ $AP_SECURITY =~ ^(wpa2|wpa2-wpa3|wpa3)$ ]] || errors+=("AP_SECURITY must be wpa2, wpa2-wpa3 or wpa3")
+        [[ $AP_BAND =~ ^(2\.4|5)$ ]] || errors+=("AP_BAND must be 2.4 or 5")
+        [[ $AP_CHANNEL =~ ^[0-9]+$ ]] || errors+=("AP_CHANNEL must be a number")
+        if [[ $AP_BAND == 2.4 && $AP_CHANNEL =~ ^[0-9]+$ ]] && ! (( AP_CHANNEL >= 1 && AP_CHANNEL <= 13 )); then
+            errors+=("AP_CHANNEL must be 1-13 on 2.4 GHz")
+        fi
+        if [[ $AP_BAND == 5 && $AP_CHANNEL =~ ^[0-9]+$ ]] && ! (( (AP_CHANNEL >= 36 && AP_CHANNEL <= 48) || (AP_CHANNEL >= 149 && AP_CHANNEL <= 165) )); then
+            errors+=("AP_CHANNEL on 5 GHz must be a non-DFS channel (36-48 or 149-165)")
+        fi
+        [[ $AP_MAX_CLIENTS =~ ^[0-9]+$ ]] && (( AP_MAX_CLIENTS >= 1 && AP_MAX_CLIENTS <= 64 )) \
+            || errors+=("AP_MAX_CLIENTS must be 1-64")
     fi
     [[ $AP_COUNTRY =~ ^[A-Z]{2}$ ]] || errors+=("AP_COUNTRY must be a two-letter uppercase code, e.g. US, GB, DE")
-    [[ $AP_MAX_CLIENTS =~ ^[0-9]+$ ]] && (( AP_MAX_CLIENTS >= 1 && AP_MAX_CLIENTS <= 64 )) \
-        || errors+=("AP_MAX_CLIENTS must be 1-64")
 
     valid_ipv4 "$LAN_ADDRESS" || errors+=("LAN_ADDRESS is not an IPv4 address")
     [[ $LAN_PREFIX =~ ^[0-9]+$ ]] && (( LAN_PREFIX >= 16 && LAN_PREFIX <= 29 )) \
@@ -146,6 +159,45 @@ set_conf_value() {
     ' "$PIGW_CONF" >"$tmp"
     chmod 600 "$tmp"
     mv "$tmp" "$PIGW_CONF"
+}
+
+# Do two networks overlap?  subnets_overlap 192.168.50.1/24 192.168.50.38/24
+subnets_overlap() {
+    local a=${1%/*} pa=${1#*/} b=${2%/*} pb=${2#*/}
+    local p=$(( pa < pb ? pa : pb ))
+    local mask=$(( (0xFFFFFFFF << (32 - p)) & 0xFFFFFFFF ))
+    (( ($(ip2int "$a") & mask) == ($(ip2int "$b") & mask) ))
+}
+
+# Print the first address on another interface that clashes with the AP subnet
+# (for example the router's network also being 192.168.50.x). Ignores AP_IFACE.
+lan_conflict() {
+    local ifc cidr
+    while read -r ifc cidr; do
+        [[ $ifc == "$AP_IFACE" || $ifc == lo ]] && continue
+        if subnets_overlap "$LAN_ADDRESS/$LAN_PREFIX" "$cidr"; then
+            echo "$ifc $cidr"
+            return 0
+        fi
+    done < <(ip -4 -o addr show 2>/dev/null | awk '{ print $2, $4 }')
+    return 1
+}
+
+# Move LAN_ADDRESS/DHCP_* to the first candidate /24 that clashes with nothing.
+pick_free_lan() {
+    local base
+    for base in 192.168.50 10.50.0 172.20.50 192.168.77 10.77.0; do
+        LAN_ADDRESS=$base.1 LAN_PREFIX=24
+        if ! lan_conflict >/dev/null; then
+            set_conf_value LAN_ADDRESS "$base.1"
+            set_conf_value LAN_PREFIX 24
+            set_conf_value DHCP_START "$base.10"
+            set_conf_value DHCP_END "$base.200"
+            load_config
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Frequency in MHz -> channel number.

@@ -1,0 +1,6 @@
+[Unit]
+Description=Pi Gateway: follow the router's channel in single-radio mode
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi-gateway/watch
