@@ -4,6 +4,9 @@ PartOf=pi-gateway.target
 BindsTo=pi-gateway-net.service
 After=pi-gateway-net.service
 
+# Only in Wi-Fi mode: net-up writes this file only when CLIENT_LINK=wifi.
+ConditionPathExists=/run/pi-gateway/hostapd.conf
+
 [Service]
 Type=simple
 ExecStart=/usr/sbin/hostapd /run/pi-gateway/hostapd.conf

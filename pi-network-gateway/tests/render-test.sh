@@ -88,6 +88,33 @@ check "$d/hostapd.conf" '^channel=44$'
 check "$d/hostapd.conf" '^vht_oper_chwidth=0$'
 check "$d/rules.nft" 'oifname "wlan0" ip saddr'
 
+echo "case: USB link (no Wi-Fi settings needed)"
+PIGW_CONF=$WORK/usb.conf
+cp "$ROOT/config/gateway.conf.example" "$PIGW_CONF"
+set_conf_value CLIENT_LINK usb
+set_conf_value UPSTREAM_IFACE wlan0
+load_config; validate_config     # example password must not matter here
+[[ $AP_IFACE == pigw0 ]] || { echo "  FAIL: USB mode should use pigw0, got $AP_IFACE"; fails=$((fails+1)); }
+mkdir -p "$WORK/usb"
+render_dnsmasq "$WORK/usb/dnsmasq.conf"
+render_nft "$WORK/usb/rules.nft"
+check "$WORK/usb/dnsmasq.conf" '^interface=pigw0$'
+check "$WORK/usb/rules.nft" 'iifname "pigw0" jump ap_to_pi'
+check "$WORK/usb/rules.nft" 'oifname "wlan0" ip saddr 192.168.50.0/24 masquerade'
+if command -v nft >/dev/null && ((EUID == 0)); then
+    nft -c -f "$WORK/usb/rules.nft" || { echo "  FAIL: nft rejected USB rules"; fails=$((fails+1)); }
+fi
+
+echo "case: Ethernet link"
+PIGW_CONF=$WORK/eth.conf
+cp "$ROOT/config/gateway.conf.example" "$PIGW_CONF"
+set_conf_value CLIENT_LINK ethernet
+set_conf_value UPSTREAM_IFACE wlan0
+set_conf_value AP_IFACE eth0
+load_config; validate_config
+render_nft "$WORK/eth-rules.nft"
+check "$WORK/eth-rules.nft" 'oifname "wlan0" ip saddr'
+
 echo "case: static leases + system DNS"
 PIGW_CONF=$WORK/static.conf
 cp "$ROOT/config/gateway.conf.example" "$PIGW_CONF"
@@ -118,6 +145,7 @@ bad LAN_ADDRESS=300.1.1.1
 bad UPSTREAM_IFACE=wlan0
 bad AP_COUNTRY=us
 bad 'UPSTREAM_DNS=1.1.1.1 nope'
+bad CLIENT_LINK=bluetooth
 
 echo "case: freq2chan"
 [[ $(freq2chan 2437) == 6 && $(freq2chan 2484) == 14 && $(freq2chan 5180) == 36 && $(freq2chan 5745) == 149 ]] \

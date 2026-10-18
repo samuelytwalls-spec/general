@@ -52,9 +52,15 @@ status() {
     local up_addr
     up_addr=$(ip -4 -o addr show dev "$UPSTREAM_IFACE" 2>/dev/null | awk '{ print $4; exit }')
     printf '\nNetwork:\n'
-    printf '  SSID        %s (%s)\n' "$AP_SSID" "$(is_yes "$AP_HIDDEN" && echo hidden || echo broadcast)"
-    printf '  Security    %s\n' "$AP_SECURITY"
-    printf '  AP          %s  %s/%s\n' "$AP_IFACE" "$LAN_ADDRESS" "$LAN_PREFIX"
+    if is_wifi_link; then
+        printf '  SSID        %s (%s)\n' "$AP_SSID" "$(is_yes "$AP_HIDDEN" && echo hidden || echo broadcast)"
+        printf '  Security    %s\n' "$AP_SECURITY"
+        printf '  AP          %s  %s/%s\n' "$AP_IFACE" "$LAN_ADDRESS" "$LAN_PREFIX"
+    else
+        local cable=unplugged
+        [[ $(cat "/sys/class/net/$AP_IFACE/carrier" 2>/dev/null) == 1 ]] && cable=connected
+        printf '  Client link %s cable on %s  %s/%s  (%s)\n' "$CLIENT_LINK" "$AP_IFACE" "$LAN_ADDRESS" "$LAN_PREFIX" "$cable"
+    fi
     printf '  Upstream    %s  %s\n' "$UPSTREAM_IFACE" "${up_addr:-no address}"
     printf '  Gateway     %s\n' "$(ip -4 route show default 2>/dev/null | awk '{ print $3 " via " $5; exit }')"
     printf '  DNS         %s\n' "$(is_yes "$PIHOLE" && echo "Pi-hole (http://$LAN_ADDRESS/admin)" || echo "dnsmasq -> ${UPSTREAM_DNS:-system resolvers}")"
@@ -72,12 +78,30 @@ status() {
         printf '  Channel     %s\n' "${channel:-?}"
         printf '  Clients     %s\n' "$n"
     fi
+    # Powered from a computer's USB port, the Pi 5 can run short of power.
+    if [[ $CLIENT_LINK == usb ]] && command -v vcgencmd >/dev/null; then
+        local thr
+        thr=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+        if [[ $thr == 0x0 ]]; then
+            printf '  Power       OK\n'
+        else
+            printf '  Power       UNDER-VOLTAGE/THROTTLING (%s) - use a stronger USB port (USB-C, 3 A)\n' "${thr:-?}"
+        fi
+    fi
 }
+
+wifi_only() { is_wifi_link || die "this command is for the Wi-Fi network; CLIENT_LINK is $CLIENT_LINK"; }
 
 clients() {
     load_config
-    [[ -S $PIGW_RUN/hostapd/$AP_IFACE ]] || die "access point is not running"
     local leases=$PIGW_STATE/dnsmasq.leases mac ip name info signal
+    if ! is_wifi_link; then
+        # No access point to ask; show who holds a DHCP lease.
+        printf '%-18s %-16s %s\n' MAC IP HOSTNAME
+        [[ -r $leases ]] && awk '{ printf "%-18s %-16s %s\n", $2, $3, $4 }' "$leases"
+        return 0
+    fi
+    [[ -S $PIGW_RUN/hostapd/$AP_IFACE ]] || die "access point is not running"
     printf '%-18s %-16s %-24s %s\n' MAC IP HOSTNAME SIGNAL
     while read -r mac; do
         [[ -n $mac ]] || continue
@@ -93,6 +117,7 @@ clients() {
 
 qr() {
     load_config
+    wifi_only
     command -v qrencode >/dev/null || die "qrencode is not installed (apt install qrencode)"
     # Escape \ ; , : " as required by the WIFI: URI format.
     # shellcheck disable=SC2001
@@ -119,6 +144,7 @@ case $cmd in
     check)   need_root "$cmd" "$@"; load_config; validate_config; log "config OK" ;;
     set-password)
         need_root "$cmd" "$@"
+        load_config; wifi_only
         pw=${1:-}
         if [[ -z $pw ]]; then
             read -r -s -p "New Wi-Fi password (8-63 chars): " pw; echo
@@ -130,11 +156,13 @@ case $cmd in
         restart ;;
     set-ssid)
         need_root "$cmd" "$@"
+        load_config; wifi_only
         [[ -n ${1:-} ]] || die "usage: pi-gateway set-ssid NAME"
         set_conf_value AP_SSID "$1"
         restart ;;
     hidden)
         need_root "$cmd" "$@"
+        load_config; wifi_only
         case ${1:-} in
             on)  set_conf_value AP_HIDDEN yes ;;
             off) set_conf_value AP_HIDDEN no ;;
@@ -143,6 +171,7 @@ case $cmd in
         restart ;;
     kick)
         need_root "$cmd" "$@"
+        load_config; wifi_only
         load_config
         [[ ${1:-} =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || die "usage: pi-gateway kick MAC"
         hostapd_cli -p "$PIGW_RUN/hostapd" -i "$AP_IFACE" deauthenticate "$1" ;;

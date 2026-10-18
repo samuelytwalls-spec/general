@@ -8,6 +8,11 @@ the router refuses to serve (for example, one blocked by MAC address or
 missing from an allow-list) works through the Pi. **Pi-hole** ad blocking for
 that network is optional.
 
+Instead of the hidden Wi-Fi network, a computer can also connect with a
+**USB cable** to the Pi's USB-C port, where the Pi acts as a USB network
+adapter. A device can also connect with an **Ethernet cable**. See
+[Connect a computer over USB](#connect-a-computer-over-usb).
+
 ```
                  router's network                      Pi Gateway network (hidden SSID, WPA2)
  ┌────────┐   eth0 or wlan0    ┌──────────────────────────────────┐   wlan0 / wlan1 / uap0   ┌────────────────┐
@@ -29,6 +34,7 @@ their rules.
 - [Hardware and setup modes](#hardware-and-setup-modes)
 - [Install](#install)
 - [Connect a device to the hidden network](#connect-a-device-to-the-hidden-network)
+- [Connect a computer over USB](#connect-a-computer-over-usb)
 - [Pi-hole](#pi-hole)
 - [Day-to-day commands](#day-to-day-commands)
 - [Configuration reference](#configuration-reference)
@@ -62,6 +68,8 @@ hostapd, dnsmasq and an nftables table, and it idles at a few MB of RAM.
 |---|---|---|---|
 | **1. Ethernet uplink** (recommended) | Ethernet cable (`eth0`) | built-in Wi-Fi (`wlan0`) | Fastest and most reliable. Any channel and band. |
 | **2. USB adapter** | built-in Wi-Fi (`wlan0`) | USB Wi-Fi adapter (`wlan1`) | No cable needed. The adapter must support AP mode (check with `iw list`: "Supported interface modes: AP"). Adapters with in-kernel drivers, such as MediaTek MT7612U and MT7921AU, work well. |
+| **USB cable** | built-in Wi-Fi (`wlan0`) or Ethernet | **USB cable** from the computer to the Pi's USB-C port (no hidden network) | No Wi-Fi channel issues. One computer. The computer also powers the Pi. See [Connect a computer over USB](#connect-a-computer-over-usb). |
+| **Ethernet cable** | built-in Wi-Fi (`wlan0`) | **Ethernet cable** from the device to the Pi (no hidden network) | Very reliable. Add a cheap switch for several devices. |
 | **3. Single radio** | built-in Wi-Fi (`wlan0`) | virtual AP on the same chip (`uap0`) | No extra hardware. The AP must use the router's channel and is limited to 20 MHz, so it is slower. The router's channel must not be a 5 GHz DFS (radar) channel, 52–144: set its 5 GHz channel to 36–48 or 149–165, or join its 2.4 GHz network. If the router changes channel, the gateway follows within about a minute. |
 
 You also need a microSD card (8 GB or more) or an NVMe SSD, and the official
@@ -123,6 +131,62 @@ The device gets an address in `192.168.50.x` and uses the Pi (`192.168.50.1`)
 as its gateway and DNS server. If your router already uses `192.168.50.x`, the
 installer picks a free subnet instead, such as `10.50.0.x`, and
 `sudo pi-gateway status` shows which one.
+
+## Connect a computer over USB
+
+Choose **2) USB cable** in the installer's first question. The Pi 5's USB-C
+port, normally just its power input, then also works as a **USB network
+adapter**. Plug it into the computer, and the computer gets internet through
+the Pi.
+
+```
+ Router ◄── Wi-Fi (or Ethernet) ── Raspberry Pi 5 ◄══ USB cable ══► Computer
+                                    USB-C port = network adapter     sees "Remote NDIS" / "Pi Gateway"
+```
+
+- **No software needed on the computer.** Windows 10/11 binds its built-in
+  RNDIS driver automatically. macOS, Linux and ChromeOS use their built-in
+  CDC-Ethernet driver. The Pi offers both, so each OS picks the one it has.
+- The computer gets an address from the Pi by DHCP and uses the Pi as its
+  gateway and DNS server. Pi-hole works the same way as on the hidden network.
+- **Optional Windows helper:**
+  [`client/windows/pi-gateway-usb.ps1`](client/windows/pi-gateway-usb.ps1)
+  finds the Pi, makes it the preferred route (useful if the computer is also
+  on another network), and tests the Pi, the internet and DNS. Run it from an
+  Administrator PowerShell:
+
+  ```
+  powershell -ExecutionPolicy Bypass -File .\pi-gateway-usb.ps1
+  ```
+
+**Setup:**
+
+1. On the Pi, with its normal power supply and connected to the router over
+   Wi-Fi, run `sudo ./install.sh`, choose **2) USB cable**, then **Wi-Fi** for
+   the router connection.
+2. The installer enables USB device mode by adding
+   `dtoverlay=dwc2,dr_mode=peripheral` to `/boot/firmware/config.txt`. This
+   needs a reboot, so it tells you to power off.
+3. Unplug the power supply. Connect the Pi's **USB-C port** to the computer
+   with a **USB data cable**. Many USB-C cables are charge-only and won't
+   work. The Pi boots, powered by the computer.
+4. After about 30 seconds a new network adapter appears on the computer. Check
+   it with `ping 10.50.0.1` (or whatever `LAN_ADDRESS` is), or run the Windows
+   helper.
+
+**Power:** the Pi 5 is power-hungry, and a computer's USB port may not
+supply enough.
+
+- Use a **USB-C port** on the computer if it has one. These usually supply
+  1.5–3 A. A USB-A port (0.5–0.9 A) often is not enough.
+- With nothing else plugged into the Pi and the gateway's light load, a
+  USB-C port is usually fine.
+- `sudo pi-gateway status` shows `Power OK`, or warns about under-voltage.
+- The Pi turns off when the computer sleeps or shuts down. That's safe for
+  the gateway, but avoid it while you're changing files on the Pi.
+
+You can still SSH to the Pi from the computer over the cable:
+`ssh user@10.50.0.1`.
 
 ## Pi-hole
 
@@ -227,7 +291,7 @@ Files:
 | Path | What |
 |---|---|
 | `/etc/pi-gateway/gateway.conf` | Your configuration |
-| `/usr/local/lib/pi-gateway/` | `common.sh`, `render.sh`, `net-up`, `net-down`, `pihole-setup` |
+| `/usr/local/lib/pi-gateway/` | `common.sh`, `render.sh`, `net-up`, `net-down`, `pihole-setup`, `watch`, `usb-gadget` |
 | `/usr/local/bin/pi-gateway` | CLI |
 | `/etc/systemd/system/pi-gateway*.{service,target}` | Services |
 | `/run/pi-gateway/` | Generated configs, rebuilt on every start |
@@ -242,6 +306,9 @@ Files:
 | Device connects but has no internet | `sudo pi-gateway status`: the upstream needs an address and there must be a default route. Run `sudo nft list table inet pigw`. If a firewall such as ufw is installed with a forward policy of DROP, allow forwarding from the AP interface to the upstream interface. |
 | Connects, gets no IP | `journalctl -u pi-gateway-dhcp -b`. Check whether another DHCP or DNS server (stock dnsmasq, Pi-hole DHCP) is running. |
 | Single-radio mode: `pi-gateway-net` fails with "DFS (radar) channel", or AP state is `COUNTRY_UPDATE`/`DFS` | The router is on a 5 GHz radar channel (52–144), where the Pi cannot run an access point. In the router's settings, pick 5 GHz channel 36, 40, 44, 48 or 149–165 and turn off automatic selection of DFS channels. On ASUS routers this is under Wireless → General: untick "Auto select channel including DFS channels". Or connect `wlan0` to the router's 2.4 GHz network. The gateway restarts by itself once the channel changes. |
+| USB: no new network adapter on the computer | Use a data cable and the Pi's **USB-C** port. On the Pi, `ls /sys/class/udc` must list a controller; if it doesn't, the `dwc2` overlay isn't active, so check `/boot/firmware/config.txt` and reboot. Run `sudo journalctl -u pi-gateway-net -b`. |
+| USB: Windows shows "RNDIS" with a yellow mark | Device Manager → right-click → Update driver → Browse → Let me pick → Network adapters → Microsoft → **Remote NDIS Compatible Device**. |
+| USB: the Pi reboots or `status` warns about under-voltage | The computer's port can't power the Pi. Use a USB-C port on the computer, or a different computer. |
 | Single-radio mode stops working after a while | The router changed channel. `pi-gateway-watch.timer` restarts the gateway within a minute; check with `systemctl status pi-gateway-watch.timer`. A fixed channel on the router avoids the brief outage. |
 | `pi-gateway-net` fails with "overlaps … on wlan0/eth0" | The hidden network uses the same subnet as your router. ASUS routers, for example, use `192.168.50.x`, which is also the default here. Re-run `sudo ./install.sh` and it moves the hidden network to a free subnet automatically, or change `LAN_ADDRESS` and `DHCP_*` by hand, for example to `10.50.0.x`. |
 | Pi-hole page doesn't load | `systemctl status pihole-FTL`. Open `http://192.168.50.1/admin` from a device on the hidden network. |

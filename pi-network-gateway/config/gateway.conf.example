@@ -5,6 +5,18 @@
 # Apply changes with:  sudo pi-gateway restart
 
 # ---------------------------------------------------------------------------
+# How the blocked device connects to the Pi:
+#   wifi     - a (hidden) Wi-Fi network made by the Pi (AP_* settings below)
+#   usb      - USB cable from the computer to the Pi 5's USB-C port. The Pi
+#              shows up as a USB network adapter (Windows, macOS, Linux; no
+#              software needed) and is powered by the computer. AP_IFACE is
+#              set automatically; AP_SSID/AP_PASSWORD etc. are ignored.
+#   ethernet - Ethernet cable from the device to the Pi's Ethernet port.
+#              Set AP_IFACE=eth0 and UPSTREAM_IFACE=wlan0.
+# ---------------------------------------------------------------------------
+CLIENT_LINK=wifi
+
+# ---------------------------------------------------------------------------
 # Upstream: where the Pi itself gets internet access (it joins your router).
 #   eth0  - Ethernet cable to the router (recommended, most reliable)
 #   wlan0 - the Pi's built-in Wi-Fi, connected to the router with NetworkManager

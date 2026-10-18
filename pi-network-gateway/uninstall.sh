@@ -19,6 +19,9 @@ if [[ -f /etc/NetworkManager/conf.d/99-pi-gateway.conf ]]; then
     rm -f /etc/NetworkManager/conf.d/99-pi-gateway.conf
     systemctl reload NetworkManager 2>/dev/null
 fi
+for bootcfg in /boot/firmware/config.txt /boot/config.txt; do
+    [[ -f $bootcfg ]] && sed -i '/^# pi-gateway: USB-C port acts as a USB network adapter$/,+2d' "$bootcfg"
+done
 if [[ -f /etc/dhcpcd.conf ]]; then
     sed -i '/^# pi-gateway$/,+1d' /etc/dhcpcd.conf
 fi

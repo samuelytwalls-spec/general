@@ -53,9 +53,16 @@ if is_yes "$AP_VIRTUAL"; then
     fi
 fi
 
-[[ -d /sys/class/net/$AP_IFACE ]] || die "AP interface $AP_IFACE does not exist (USB adapter plugged in?)"
-[[ -d /sys/class/net/$AP_IFACE/wireless || -d /sys/class/net/$AP_IFACE/phy80211 ]] \
-    || die "$AP_IFACE is not a Wi-Fi interface"
+# --- USB mode: the Pi's USB-C port becomes a network adapter for the computer
+if [[ $CLIENT_LINK == usb ]]; then
+    USB_BRIDGE=$AP_IFACE "$PIGW_LIB/usb-gadget" up
+fi
+
+[[ -d /sys/class/net/$AP_IFACE ]] || die "interface $AP_IFACE does not exist (USB adapter or cable plugged in?)"
+if is_wifi_link; then
+    [[ -d /sys/class/net/$AP_IFACE/wireless || -d /sys/class/net/$AP_IFACE/phy80211 ]] \
+        || die "$AP_IFACE is not a Wi-Fi interface"
+fi
 
 # --- Addressing --------------------------------------------------------------
 # A clash with the router's network breaks routing for the whole Pi, so refuse.
@@ -81,11 +88,16 @@ render_nft "$PIGW_RUN/rules.nft"
 nft -f "$PIGW_RUN/rules.nft"
 
 # --- Daemon configs ----------------------------------------------------------
-render_hostapd "$PIGW_RUN/hostapd.conf"
+# pi-gateway-hostapd only runs when hostapd.conf exists (Wi-Fi mode).
+if is_wifi_link; then
+    render_hostapd "$PIGW_RUN/hostapd.conf"
+else
+    rm -f "$PIGW_RUN/hostapd.conf"
+fi
 render_dnsmasq "$PIGW_RUN/dnsmasq.conf"
 
 if is_yes "$PIHOLE" && ! systemctl is-enabled --quiet pihole-FTL.service 2>/dev/null; then
     warn "PIHOLE=yes but pihole-FTL is not enabled; clients will have no DNS. Run: sudo pi-gateway pihole on"
 fi
 
-log "AP $AP_IFACE at $LAN_ADDRESS/$LAN_PREFIX, routing via $UPSTREAM_IFACE (Pi-hole: $PIHOLE)"
+log "clients via $CLIENT_LINK on $AP_IFACE at $LAN_ADDRESS/$LAN_PREFIX, routing via $UPSTREAM_IFACE (Pi-hole: $PIHOLE)"
