@@ -1,0 +1,24 @@
+#!/bin/bash
+# Single-radio mode: the AP must stay on the router's channel. When the router
+# moves (routers with automatic channel selection do this), restart the
+# gateway so the AP follows. Run every minute by pi-gateway-watch.timer.
+set -uo pipefail
+
+PIGW_LIB=${PIGW_LIB:-/usr/local/lib/pi-gateway}
+# shellcheck source=common.sh
+source "$PIGW_LIB/common.sh"
+load_config
+
+is_yes "$AP_VIRTUAL" || exit 0
+# No record means the gateway was stopped on purpose (or never got this far).
+[[ -r $PIGW_RUN/upstream-channel ]] || exit 0
+
+freq=$(iw dev "$AP_PARENT_IFACE" link 2>/dev/null | awk '/freq:/ { print int($2); exit }')
+[[ -n $freq ]] || exit 0    # not connected right now; NetworkManager reconnects
+chan=$(freq2chan "$freq") || exit 0
+prev=$(<"$PIGW_RUN/upstream-channel")
+
+if [[ $chan != "$prev" ]]; then
+    log "router moved from channel $prev to $chan - restarting the gateway"
+    systemctl --no-block restart pi-gateway.target
+fi

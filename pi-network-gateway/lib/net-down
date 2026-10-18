@@ -8,6 +8,8 @@ source "$PIGW_LIB/common.sh"
 load_config
 
 nft delete table inet pigw 2>/dev/null
+# Stops pi-gateway-watch from restarting a gateway that was stopped on purpose.
+rm -f "$PIGW_RUN/upstream-channel"
 
 if [[ -d /sys/class/net/$AP_IFACE ]]; then
     ip addr flush dev "$AP_IFACE" 2>/dev/null

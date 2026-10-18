@@ -33,8 +33,14 @@ if is_yes "$AP_VIRTUAL"; then
     RADIO_CHANNEL=$(freq2chan "$freq") || die "unsupported upstream frequency $freq MHz"
     if (( freq < 3000 )); then RADIO_BAND=2.4; else RADIO_BAND=5; fi
     RADIO_NARROW=yes
+    # Remember the channel even if we fail below, so pi-gateway-watch can
+    # restart the gateway once the router moves to a usable channel.
+    echo "$RADIO_CHANNEL" >"$PIGW_RUN/upstream-channel"
     if [[ $RADIO_BAND == 5 ]] && ! (( (RADIO_CHANNEL >= 36 && RADIO_CHANNEL <= 48) || RADIO_CHANNEL >= 149 )); then
-        warn "upstream uses DFS channel $RADIO_CHANNEL; the AP may fail to start. Set the router to a non-DFS channel."
+        die "the router is on 5 GHz DFS (radar) channel $RADIO_CHANNEL. The Pi cannot run an access point" \
+            "there, and in single-radio mode the AP must use the router's channel. Set the router's 5 GHz" \
+            "channel to 36, 40, 44, 48 or 149-165, or connect wlan0 to the router's 2.4 GHz network." \
+            "The gateway restarts by itself once the router's channel changes."
     fi
     log "single-radio mode: following upstream on channel $RADIO_CHANNEL ($RADIO_BAND GHz)"
 

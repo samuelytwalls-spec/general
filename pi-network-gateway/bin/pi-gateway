@@ -59,8 +59,15 @@ status() {
     printf '  Gateway     %s\n' "$(ip -4 route show default 2>/dev/null | awk '{ print $3 " via " $5; exit }')"
     printf '  DNS         %s\n' "$(is_yes "$PIHOLE" && echo "Pi-hole (http://$LAN_ADDRESS/admin)" || echo "dnsmasq -> ${UPSTREAM_DNS:-system resolvers}")"
     if [[ -S $PIGW_RUN/hostapd/$AP_IFACE ]]; then
-        local channel n
-        channel=$(hostapd_cli -p "$PIGW_RUN/hostapd" -i "$AP_IFACE" status 2>/dev/null | awk -F= '$1 == "channel" { print $2 }')
+        local channel n apstat apstate
+        apstat=$(hostapd_cli -p "$PIGW_RUN/hostapd" -i "$AP_IFACE" status 2>/dev/null || true)
+        channel=$(awk -F= '$1 == "channel" { print $2 }' <<<"$apstat")
+        apstate=$(awk -F= '$1 == "state" { print $2 }' <<<"$apstat")
+        if [[ $apstate == ENABLED ]]; then
+            printf '  AP state    broadcasting\n'
+        else
+            printf '  AP state    %s - NOT broadcasting (see: sudo journalctl -u pi-gateway-net -u pi-gateway-hostapd -b)\n' "${apstate:-unknown}"
+        fi
         n=$(hostapd_cli -p "$PIGW_RUN/hostapd" -i "$AP_IFACE" list_sta 2>/dev/null | grep -c . || true)
         printf '  Channel     %s\n' "${channel:-?}"
         printf '  Clients     %s\n' "$n"

@@ -62,7 +62,7 @@ hostapd, dnsmasq and an nftables table, and it idles at a few MB of RAM.
 |---|---|---|---|
 | **1. Ethernet uplink** (recommended) | Ethernet cable (`eth0`) | built-in Wi-Fi (`wlan0`) | Fastest and most reliable. Any channel and band. |
 | **2. USB adapter** | built-in Wi-Fi (`wlan0`) | USB Wi-Fi adapter (`wlan1`) | No cable needed. The adapter must support AP mode (check with `iw list`: "Supported interface modes: AP"). Adapters with in-kernel drivers, such as MediaTek MT7612U and MT7921AU, work well. |
-| **3. Single radio** | built-in Wi-Fi (`wlan0`) | virtual AP on the same chip (`uap0`) | No extra hardware. The AP must use the router's channel and is limited to 20 MHz, so it is slower. If the router changes channel, run `pi-gateway restart`. |
+| **3. Single radio** | built-in Wi-Fi (`wlan0`) | virtual AP on the same chip (`uap0`) | No extra hardware. The AP must use the router's channel and is limited to 20 MHz, so it is slower. The router's channel must not be a 5 GHz DFS (radar) channel, 52–144: set its 5 GHz channel to 36–48 or 149–165, or join its 2.4 GHz network. If the router changes channel, the gateway follows within about a minute. |
 
 You also need a microSD card (8 GB or more) or an NVMe SSD, and the official
 27 W USB-C power supply.
@@ -149,7 +149,7 @@ Pi-hole installs with its official unattended installer from
 ## Day-to-day commands
 
 ```
-sudo pi-gateway status       services, addresses, channel, number of clients
+sudo pi-gateway status       services, whether the AP is broadcasting, addresses, channel, clients
 sudo pi-gateway clients      connected devices: MAC, IP, hostname, signal
 sudo pi-gateway qr           QR code for joining the hidden network
 sudo pi-gateway set-password change the Wi-Fi password (prompts)
@@ -196,6 +196,7 @@ pi-gateway.target
 ├── pi-gateway-net.service      lib/net-up / lib/net-down
 │     • validates gateway.conf
 │     • single-radio: waits for wlan0's link, reads its channel, creates uap0
+│       (pi-gateway-watch.timer restarts everything if the router changes channel)
 │     • sets 192.168.50.1/24 on the AP interface, enables IPv4 forwarding
 │     • loads the nftables table "inet pigw"
 │     • renders /run/pi-gateway/{hostapd.conf,dnsmasq.conf,rules.nft}
@@ -240,7 +241,8 @@ Files:
 | Device can't find the network | It is hidden: add it by hand or use the QR code. Check the SSID's spelling and case. To rule out the hidden setting, try `sudo pi-gateway hidden off`. |
 | Device connects but has no internet | `sudo pi-gateway status`: the upstream needs an address and there must be a default route. Run `sudo nft list table inet pigw`. If a firewall such as ufw is installed with a forward policy of DROP, allow forwarding from the AP interface to the upstream interface. |
 | Connects, gets no IP | `journalctl -u pi-gateway-dhcp -b`. Check whether another DHCP or DNS server (stock dnsmasq, Pi-hole DHCP) is running. |
-| Single-radio mode stops working after a while | The router changed channel. Run `sudo pi-gateway restart`, or set a fixed channel on the router. |
+| Single-radio mode: `pi-gateway-net` fails with "DFS (radar) channel", or AP state is `COUNTRY_UPDATE`/`DFS` | The router is on a 5 GHz radar channel (52–144), where the Pi cannot run an access point. In the router's settings, pick 5 GHz channel 36, 40, 44, 48 or 149–165 and turn off automatic selection of DFS channels. On ASUS routers this is under Wireless → General: untick "Auto select channel including DFS channels". Or connect `wlan0` to the router's 2.4 GHz network. The gateway restarts by itself once the channel changes. |
+| Single-radio mode stops working after a while | The router changed channel. `pi-gateway-watch.timer` restarts the gateway within a minute; check with `systemctl status pi-gateway-watch.timer`. A fixed channel on the router avoids the brief outage. |
 | `pi-gateway-net` fails with "overlaps … on wlan0/eth0" | The hidden network uses the same subnet as your router. ASUS routers, for example, use `192.168.50.x`, which is also the default here. Re-run `sudo ./install.sh` and it moves the hidden network to a free subnet automatically, or change `LAN_ADDRESS` and `DHCP_*` by hand, for example to `10.50.0.x`. |
 | Pi-hole page doesn't load | `systemctl status pihole-FTL`. Open `http://192.168.50.1/admin` from a device on the hidden network. |
 

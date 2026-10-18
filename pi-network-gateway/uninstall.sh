@@ -5,9 +5,11 @@ set -uo pipefail
 
 ((EUID == 0)) || { echo "run as root: sudo $0" >&2; exit 1; }
 
+systemctl disable --now pi-gateway-watch.timer 2>/dev/null
 systemctl disable --now pi-gateway.target 2>/dev/null
 systemctl stop pi-gateway-dhcp.service pi-gateway-hostapd.service pi-gateway-net.service 2>/dev/null
-rm -f /etc/systemd/system/pi-gateway.target /etc/systemd/system/pi-gateway-*.service
+rm -f /etc/systemd/system/pi-gateway.target /etc/systemd/system/pi-gateway-*.service \
+      /etc/systemd/system/pi-gateway-*.timer
 systemctl daemon-reload
 
 rm -f /usr/local/bin/pi-gateway

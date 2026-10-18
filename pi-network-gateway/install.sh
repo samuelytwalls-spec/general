@@ -158,9 +158,10 @@ fi
 log "installing files"
 install -d -m 755 /usr/local/lib/pi-gateway
 install -m 644 "$SRC/lib/common.sh" "$SRC/lib/render.sh" /usr/local/lib/pi-gateway/
-install -m 755 "$SRC/lib/net-up" "$SRC/lib/net-down" "$SRC/lib/pihole-setup" /usr/local/lib/pi-gateway/
+install -m 755 "$SRC/lib/net-up" "$SRC/lib/net-down" "$SRC/lib/pihole-setup" "$SRC/lib/watch" /usr/local/lib/pi-gateway/
 install -m 755 "$SRC/bin/pi-gateway" /usr/local/bin/pi-gateway
-install -m 644 "$SRC"/systemd/pi-gateway*.service "$SRC/systemd/pi-gateway.target" /etc/systemd/system/
+install -m 644 "$SRC"/systemd/pi-gateway*.service "$SRC"/systemd/pi-gateway*.timer \
+    "$SRC/systemd/pi-gateway.target" /etc/systemd/system/
 install -d -m 755 /var/lib/pi-gateway
 
 # --- Wi-Fi regulatory domain -------------------------------------------------
@@ -200,6 +201,7 @@ fi
 # --- Start -------------------------------------------------------------------
 systemctl daemon-reload
 systemctl enable pi-gateway.target >/dev/null
+systemctl enable --now pi-gateway-watch.timer >/dev/null
 log "starting the gateway"
 systemctl restart pi-gateway.target
 sleep 3
