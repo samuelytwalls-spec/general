@@ -47,6 +47,15 @@ status() {
         state=$(systemctl is-active "$u.service" 2>/dev/null || true)
         printf '  %-22s %s\n' "$u" "$state"
     done
+    # Show why the network setup step failed, straight from its log.
+    if [[ $(systemctl is-active pi-gateway-net.service 2>/dev/null) == failed ]]; then
+        local why lines
+        why=$(journalctl -b -u pi-gateway-net.service -o cat --no-pager 2>/dev/null \
+              | grep -E 'ERROR|config error' | tail -n 3)
+        printf '\n  pi-gateway-net failed because:\n'
+        mapfile -t lines <<<"${why:-(no error recorded - see: sudo journalctl -u pi-gateway-net -b)}"
+        printf '    %s\n' "${lines[@]}"
+    fi
     if is_yes "$PIHOLE"; then
         printf '  %-22s %s\n' pihole-FTL "$(systemctl is-active pihole-FTL.service 2>/dev/null || true)"
     fi
