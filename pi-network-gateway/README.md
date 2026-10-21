@@ -223,6 +223,7 @@ sudo pi-gateway kick MAC     disconnect a device
 sudo pi-gateway pihole on|off
 sudo pi-gateway config       edit gateway.conf, validate it, restart
 sudo pi-gateway restart | start | stop
+sudo pi-gateway diag         save logs + settings to one file for troubleshooting (passwords removed)
 sudo pi-gateway logs         follow the logs of all gateway services
 ```
 
@@ -298,6 +299,16 @@ Files:
 | `/var/lib/pi-gateway/dnsmasq.leases` | DHCP leases |
 
 ## Troubleshooting
+
+Start with `sudo pi-gateway diag`. It saves everything below into one file,
+with passwords removed, that you can read or share:
+
+- service state and the gateway's logs
+- hostapd's view of the access point and connected devices
+- radio capabilities and the regulatory domain
+- addresses, routes and the firewall
+- DHCP leases
+- kernel Wi-Fi and USB messages
 
 | Symptom | What to check |
 |---|---|
