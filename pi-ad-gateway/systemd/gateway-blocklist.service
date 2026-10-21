@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh ad-blocking domain list
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pi-gateway-update-blocklist
